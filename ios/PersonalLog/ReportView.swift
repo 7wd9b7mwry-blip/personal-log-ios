@@ -208,6 +208,16 @@ struct InsightCard: View {
         store.prefetch(((i.sections ?? []).flatMap(\.items) + (i.look_at ?? [])).compactMap(\.route))
     }
 
+    /// An AI look from before follow-up questions existed is being rewritten (the server queued it): the new one replaces
+    /// it when stored, about half a minute later.
+    private func swapInRewrite(of old: Insight) async {
+        for _ in 0..<40 {
+            try? await Task.sleep(nanoseconds: 5_000_000_000)
+            guard let n = try? await store.insight(page, cachedOnly: true), n.ready else { continue }
+            if n.cached_at != old.cached_at { show(n); return }
+        }
+    }
+
     /// Shows a stored answer; otherwise (or when asked) queues one and waits for it: the PC's Claude Code worker
     /// takes about half a minute.
     private func load(cachedOnly: Bool, refresh: Bool = false) async {
@@ -215,7 +225,11 @@ struct InsightCard: View {
         do {
             error = nil
             var i = try await store.insight(page, cachedOnly: cachedOnly, refresh: refresh)
-            if i.ready { show(i); return }
+            if i.ready {
+                show(i)
+                if i.upgrading == true { await swapInRewrite(of: i) }
+                return
+            }
             if cachedOnly && i.pending != true {
                 if let e = i.error { error = "The last attempt failed: \(e.prefix(160))" }
                 return
@@ -302,7 +316,7 @@ struct SectionAsk: View {
             if expanded {
                 ForEach(thread) { qa in qaView(qa) }
                 if !busy {
-                    let next = thread.last?.answer?.followups ?? (thread.isEmpty ? section.suggestedQuestions : [])
+                    let next = thread.last?.answer?.followups ?? (thread.isEmpty ? section.followups ?? [] : [])
                     ForEach(next, id: \.self) { q in
                         Button { ask(q) } label: {
                             HStack(alignment: .top, spacing: 6) {

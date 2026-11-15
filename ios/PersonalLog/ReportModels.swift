@@ -138,6 +138,8 @@ struct Insight: Decodable, Hashable {
     var pending: Bool?       // being made
     var error: String?       // the last attempt failed
     var model: String?
+    var cached_at: String?
+    var upgrading: Bool?     // written before follow-up questions existed: a rewrite is coming
 
     var ready: Bool { none != true && queued != true && headline != nil }
 }
@@ -154,17 +156,6 @@ struct ISection: Decodable, Hashable {
         ["pattern": "Pattern", "trend": "Trend", "hypothesis": "Hypothesis", "test": "Worth testing", "watch": "Watch"][type] ?? type.capitalized
     }
 
-    /// The AI's own follow-ups; an AI look written before they existed gets standard ones for its kind of idea.
-    var suggestedQuestions: [String] {
-        if let f = followups, !f.isEmpty { return f }
-        switch type {
-        case "trend": return ["Is this trend still going, or levelling off?", "What changed around when it started?", "How confident should I be in this?"]
-        case "hypothesis": return ["What would prove this wrong?", "Is there a simpler explanation?", "How could I test this myself?"]
-        case "test": return ["How would I run this test?", "How long until I'd see a difference?", "What should I measure to judge it?"]
-        case "watch": return ["Why is this worth watching?", "What would make it a real concern?", "How many more days until it's clear?"]
-        default: return ["How confident should I be in this?", "Could something else explain it?", "What would I change to act on it?"]
-        }
-    }
 }
 
 /// The answer to a question about one idea of a page's AI look (app-insight "ask").
