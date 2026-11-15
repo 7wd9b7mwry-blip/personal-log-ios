@@ -16,6 +16,8 @@ targets:
     platform: iOS
     sources:
       - PersonalLog
+      - path: Shortcuts   # the signed "Log Foods From App", offered in Settings
+        buildPhase: resources
     settings:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: ${BUNDLE_ID}

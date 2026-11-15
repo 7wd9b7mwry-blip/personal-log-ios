@@ -61,10 +61,12 @@ struct SettingsView: View {
                 Button("Refresh buttons and recipes") { Task { await store.refresh() } }
             }
             Section {
+                if let file = Bundle.main.url(forResource: "Log Foods From App", withExtension: "shortcut") {
+                    ShareLink(item: file) { Label("Add the shortcut", systemImage: "square.and.arrow.down") }
+                }
                 Text("""
-                Foods go to MacroFactor through the Shortcut "\(store.config.foodShortcut)". Its input is JSON: \
-                {"recipe", "time", "items": [{"kind": "food", "name", "serving", "count"} | {"kind": "water", "fl_oz"}]}. \
-                See the README (iOS logging app) for its steps.
+                Foods go to MacroFactor through the Shortcut "\(store.config.foodShortcut)". To install it, tap \
+                Add the shortcut, then Shortcuts in the share sheet.
                 """)
                 .font(.footnote)
             } header: {
