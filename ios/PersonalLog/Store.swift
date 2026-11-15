@@ -287,7 +287,8 @@ final class Store: ObservableObject {
                 if let mf = it.macroFactorJSON(count: count) { line["mf"] = mf }   // the Shortcut logs it by JSON
                 items.append(line)
             case "water":
-                items.append(["kind": "water", "fl_oz": (it.fl_oz ?? 0) * servings])
+                let oz = (it.fl_oz ?? 0) * servings
+                items.append(["kind": "water", "fl_oz": oz, "ml": (oz * 29.5735).rounded()])   // MacroFactor's water takes mL
             default:
                 if let p = it.prefix {
                     enqueue(OutEvent(name: p, kind: "val", at: at, val: (it.value ?? 0) * servings, unit: it.unit))

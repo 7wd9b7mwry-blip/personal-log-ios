@@ -1,0 +1,28 @@
+# Signs the iOS Shortcut "Log Foods From App" (ios/Shortcuts, built by scripts/make_shortcut.py in the private repo)
+# on a Mac, so an iPhone can import it ("anyone" signing), and keeps it as the run's artifact. Copied into the public
+# repo's .github/workflows by scripts/publish_ios.py.
+name: Sign shortcut
+
+on:
+  push:
+    branches: [main]
+    paths: ['ios/Shortcuts/**', '.github/workflows/sign-shortcut.yml']
+  workflow_dispatch:
+
+jobs:
+  sign:
+    runs-on: macos-26
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - name: Sign
+        run: |
+          mkdir -p signed
+          for f in ios/Shortcuts/*.shortcut; do
+            shortcuts sign --mode anyone --input "$f" --output "signed/$(basename "$f")"
+          done
+          ls -la signed
+      - uses: actions/upload-artifact@v4
+        with:
+          name: signed-shortcuts
+          path: signed/
