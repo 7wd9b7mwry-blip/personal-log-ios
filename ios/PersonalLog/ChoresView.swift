@@ -150,8 +150,8 @@ enum ChoreTime {
     }
 }
 
-/// The chores' state on the phone: the plan (public.app_chores), the actions on it, and the calendar's busy times
-/// (sent with app_busy on each refresh, so the plan only uses free time).
+/// The chores' state on the phone: the plan (public.app_chores), the actions on it, the calendar's busy times
+/// (sent with app_busy on each refresh, so the plan only uses free time) and the shared Reminders list "Chores".
 @MainActor
 final class Chores: ObservableObject {
     static let shared = Chores()
@@ -185,12 +185,18 @@ final class Chores: ObservableObject {
     /// "Need N min first" (0 ends the hold).
     func hold(_ minutes: Int) async { await call("app_claim", ["p_minutes": minutes]) }
 
+    /// A refresh if the last one is over 15 min old (the Log Event action calls it, so the shared list stays current).
+    func refreshIfStale() async {
+        if loadedAt.map({ Date().timeIntervalSince($0) > 900 }) ?? true { await refresh() }
+    }
+
     private func call(_ rpc: String, _ body: [String: Any]) async {
         guard Store.shared.creds.isComplete else { return }
         do {
             let data = try await api.rpc(rpc, json: body)
             apply((try? JSONSerialization.jsonObject(with: data)) as? [String: Any] ?? [:])
             error = nil
+            await syncReminders()
         } catch let APIError.http(_, text) {
             error = ((try? JSONSerialization.jsonObject(with: Data(text.utf8))) as? [String: Any])?["message"] as? String ?? text
         } catch {
@@ -229,6 +235,101 @@ final class Chores: ObservableObject {
         let blocks: [[String: Any]] = events.filter { !$0.isAllDay && $0.availability != .free }
             .map { ["start": Fmt.iso($0.startDate), "end": Fmt.iso($0.endDate)] }
         _ = try? await api.rpc("app_busy", json: ["p_from": Fmt.iso(from), "p_to": Fmt.iso(to), "p_blocks": blocks])
+    }
+
+    // MARK: the shared Reminders list
+
+    private var syncingReminders = false
+
+    /// The Reminders list "Chores" (made in the default reminders account, iCloud, the first time; share it from the
+    /// Reminders app): the next `listDays` days of the plan, one reminder per chore and day, titled with its planned
+    /// time and room, in plan order, without due dates (no alerts). Each carries personallog://chore/<id>/<day>, so a
+    /// reminder checked off there (by anyone the list is shared with) marks the chore done here, once; ones no longer
+    /// in the plan are removed, completed ones after 3 days.
+    private func syncReminders(listDays: Int = 3) async {
+        guard !syncingReminders else { return }
+        syncingReminders = true
+        defer { syncingReminders = false }
+        if EKEventStore.authorizationStatus(for: .reminder) == .notDetermined {
+            _ = try? await calendar.requestFullAccessToReminders()
+        }
+        guard EKEventStore.authorizationStatus(for: .reminder) == .fullAccess, let list = choresList() else { return }
+
+        var reported = Set(UserDefaults.standard.stringArray(forKey: "choreRemindersDone") ?? [])
+        var open: [String: EKReminder] = [:]
+        var doneIds = Set<Int>()
+        for r in await reminders(in: list) {
+            guard let url = r.url, url.scheme == "personallog", url.host == "chore" else { continue }
+            let key = url.absoluteString
+            if r.isCompleted {
+                if !reported.contains(key), url.pathComponents.count > 1, let id = Int(url.pathComponents[1]) {
+                    doneIds.insert(id)
+                    reported.insert(key)
+                }
+                if let c = r.completionDate, Date().timeIntervalSince(c) > 3 * 86400 { try? calendar.remove(r, commit: false) }
+            } else {
+                open[key] = r
+            }
+        }
+        UserDefaults.standard.set(Array(reported.suffix(300)), forKey: "choreRemindersDone")
+        for id in doneIds {   // checked off in the shared list: done (and the plan reloaded)
+            if let data = try? await api.rpc("app_chore_action", json: ["p_id": id, "p_action": "done"]) {
+                apply((try? JSONSerialization.jsonObject(with: data)) as? [String: Any] ?? [:])
+            }
+        }
+
+        var wanted: [(key: String, title: String, notes: String)] = []
+        for d in days.prefix(listDays) {
+            let today = Calendar.current.isDateInToday(d.day)
+            for it in d.items {
+                let key = "personallog://chore/\(it.choreId)/\(ChoreTime.dayString(d.day))"
+                guard !wanted.contains(where: { $0.key == key }) else { continue }
+                let when = (today ? "" : d.day.formatted(.dateTime.weekday(.abbreviated)) + " ")
+                    + it.start.formatted(date: .omitted, time: .shortened)
+                wanted.append((key, "\(when) · \(it.name)" + (it.room.map { $0.isEmpty ? "" : " (\($0))" } ?? ""),
+                               "\(it.minutes) min" + (it.priority == "must" ? ", must do" : "")))
+            }
+        }
+        for (key, r) in open where !wanted.contains(where: { $0.key == key }) { try? calendar.remove(r, commit: false) }
+        for w in wanted {
+            if let r = open[w.key] {
+                if r.title != w.title || r.notes != w.notes {
+                    r.title = w.title
+                    r.notes = w.notes
+                    try? calendar.save(r, commit: false)
+                }
+            } else {
+                let r = EKReminder(eventStore: calendar)
+                r.calendar = list
+                r.title = w.title
+                r.notes = w.notes
+                r.url = URL(string: w.key)
+                try? calendar.save(r, commit: false)
+            }
+        }
+        try? calendar.commit()
+    }
+
+    private func choresList() -> EKCalendar? {
+        let d = UserDefaults.standard
+        if let id = d.string(forKey: "choresListId"), let c = calendar.calendar(withIdentifier: id) { return c }
+        if let c = calendar.calendars(for: .reminder).first(where: { $0.title == "Chores" }) {
+            d.set(c.calendarIdentifier, forKey: "choresListId")
+            return c
+        }
+        guard let source = calendar.defaultCalendarForNewReminders()?.source else { return nil }
+        let c = EKCalendar(for: .reminder, eventStore: calendar)
+        c.title = "Chores"
+        c.source = source
+        guard (try? calendar.saveCalendar(c, commit: true)) != nil else { return nil }
+        d.set(c.calendarIdentifier, forKey: "choresListId")
+        return c
+    }
+
+    private func reminders(in list: EKCalendar) async -> [EKReminder] {
+        await withCheckedContinuation { cont in
+            calendar.fetchReminders(matching: calendar.predicateForReminders(in: [list])) { cont.resume(returning: $0 ?? []) }
+        }
     }
 }
 

@@ -56,6 +56,7 @@ struct LogEventIntent: AppIntent {
         let store = Store.shared
         store.enqueue(OutEvent(name: n, kind: kind.rawValue, at: Date()))
         await store.flush()
+        await Chores.shared.refreshIfStale()   // keeps the shared Chores list current (every 15 min at most)
         return .result()
     }
 }
