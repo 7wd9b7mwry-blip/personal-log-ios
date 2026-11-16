@@ -429,7 +429,7 @@ struct ChoresView: View {
                     }
                 } header: { Text("Morning") } footer: {
                     Text(chores.morning.alarmOn
-                         ? "An alarm every \(chores.morning.everyMinutes) min until the face and hand photos are taken."
+                         ? "An alarm every \(chores.morning.everyMinutes) min until the morning photos are taken."
                          : "The wake alarm is off.")
                 }
                 holdSection

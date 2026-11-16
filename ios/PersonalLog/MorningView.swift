@@ -146,7 +146,7 @@ struct OpenMorningPhotosIntent: LiveActivityIntent {
     }
 }
 
-/// Face, then left hand, then right hand, each with the camera, each sent as a photo event (scored nightly like the
+/// The morning photos: three shots (the face, then each hand), each sent as a photo event (scored nightly like the
 /// Shortcut's). When all three are in, today's alarms stop and Morning photos is done; then it says what's next.
 struct MorningPhotosView: View {
     @EnvironmentObject var store: Store
@@ -167,10 +167,10 @@ struct MorningPhotosView: View {
         NavigationStack {
             VStack(spacing: 24) {
                 if step < steps.count {
-                    Text("\(step + 1) of \(steps.count)").font(.caption).foregroundStyle(.secondary)
-                    Image(systemName: steps[step].front ? "face.smiling" : "hand.raised")
+                    Image(systemName: "camera.fill")
                         .font(.system(size: 72)).foregroundStyle(.orange)
-                    Text(steps[step].name).font(.title.bold())
+                    Text("Morning photos").font(.title.bold())
+                    Text("Photo \(step + 1) of \(steps.count)").font(.headline).foregroundStyle(.secondary)
                     Text(steps[step].hint).multilineTextAlignment(.center).foregroundStyle(.secondary)
                     Button {
                         camera = true
@@ -241,6 +241,8 @@ struct CameraPicker: UIViewControllerRepresentable {
         p.sourceType = UIImagePickerController.isSourceTypeAvailable(.camera) ? .camera : .photoLibrary
         if p.sourceType == .camera {
             p.cameraDevice = front && UIImagePickerController.isCameraDeviceAvailable(.front) ? .front : .rear
+            // flash on every shot, so the light is the same each morning (the front camera flashes the screen)
+            if UIImagePickerController.isFlashAvailable(for: p.cameraDevice) { p.cameraFlashMode = .on }
         }
         p.delegate = context.coordinator
         return p
@@ -304,7 +306,7 @@ struct MorningSettingsView: View {
                         Stepper("\(m.count) alarms", value: $m.count, in: 1...12)
                     }
                 } footer: {
-                    Text("Stopping an alarm only waits for the next one. Taking the face and hand photos ends today's.")
+                    Text("Stopping an alarm only waits for the next one. Taking the morning photos ends today's.")
                 }
             }
             .navigationTitle("Morning")
