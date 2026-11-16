@@ -423,7 +423,9 @@ struct ChoresView: View {
                         }
                     }
                     Button { morningSettings = true } label: {
-                        LabeledContent("Wake up", value: "\(chores.morning.weekday) weekdays, \(chores.morning.weekend) weekends")
+                        LabeledContent("Wake up", value: chores.morning.fromHomeAssistant
+                                       ? (chores.morning.upcoming.isEmpty ? "from Home Assistant" : chores.morning.upcoming)
+                                       : "\(chores.morning.weekday) weekdays, \(chores.morning.weekend) weekends")
                     }
                 } header: { Text("Morning") } footer: {
                     Text(chores.morning.alarmOn

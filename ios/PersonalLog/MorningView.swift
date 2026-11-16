@@ -13,6 +13,8 @@ struct MorningSettings: Equatable {
     var everyMinutes = 5
     var count = 6
     var photosDoneToday = false
+    var wakes: [Date] = []          // the next three mornings' wake times, from Home Assistant's wake-up schedule
+    var fromHomeAssistant = false
 
     init() {}
 
@@ -24,6 +26,13 @@ struct MorningSettings: Equatable {
         everyMinutes = (a["every_minutes"] as? NSNumber)?.intValue ?? 5
         count = (a["count"] as? NSNumber)?.intValue ?? 6
         photosDoneToday = j["photos_done_today"] as? Bool ?? false
+        wakes = ((j["wakes"] as? [[String: Any]]) ?? []).compactMap { ($0["at"] as? String).flatMap(ChoreTime.instant) }
+        fromHomeAssistant = j["source"] as? String == "home_assistant"
+    }
+
+    /// "Tue 8:00 AM, Wed 8:00 AM"
+    var upcoming: String {
+        wakes.filter { $0 > Date() }.map { $0.formatted(.dateTime.weekday(.abbreviated).hour().minute()) }.joined(separator: ", ")
     }
 
     var payload: [String: Any] {
@@ -55,7 +64,9 @@ enum MorningAlarms {
             for offset in 0..<3 {
                 guard let day = Calendar.current.date(byAdding: .day, value: offset, to: Date()) else { continue }
                 if offset == 0 && m.photosDoneToday { continue }
-                guard let wake = m.wake(on: day, holidays: holidays) else { continue }
+                // Home Assistant's wake-up schedule when the server sent it, else the app's own times
+                let fromServer = m.wakes.first { Calendar.current.isDate($0, inSameDayAs: day) }
+                guard let wake = fromServer ?? m.wake(on: day, holidays: holidays) else { continue }
                 for i in 0..<max(1, m.count) {
                     let at = wake.addingTimeInterval(Double(i * max(1, m.everyMinutes) * 60))
                     if at > Date().addingTimeInterval(30) { wanted[Fmt.iso(at)] = at }
@@ -274,10 +285,18 @@ struct MorningSettingsView: View {
     var body: some View {
         NavigationStack {
             Form {
-                Section {
-                    DatePicker("Weekdays", selection: time($m.weekday), displayedComponents: .hourAndMinute)
-                    DatePicker("Weekends and holidays", selection: time($m.weekend), displayedComponents: .hourAndMinute)
-                } header: { Text("Wake up") }
+                if m.fromHomeAssistant {
+                    Section {
+                        Text(m.upcoming.isEmpty ? "No wake-up coming up" : m.upcoming)
+                    } header: { Text("Wake up") } footer: {
+                        Text("From the wake-up schedule in Home Assistant (each weekday, the override and the one-off wake-up). Change it there.")
+                    }
+                } else {
+                    Section {
+                        DatePicker("Weekdays", selection: time($m.weekday), displayedComponents: .hourAndMinute)
+                        DatePicker("Weekends and holidays", selection: time($m.weekend), displayedComponents: .hourAndMinute)
+                    } header: { Text("Wake up") }
+                }
                 Section {
                     Toggle("Alarm until the photos are taken", isOn: $m.alarmOn)
                     if m.alarmOn {
