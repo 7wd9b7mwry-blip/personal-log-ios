@@ -308,7 +308,7 @@ final class Store: ObservableObject {
     }
 
     /// The "Arrived at Work" action (an iOS automation on arriving at Work): on a working day (not Saturday, Sunday or
-    /// one of the `holidays`) logs Office unless it was logged today, and the first time that day returns the office
+    /// one of the `holidays`), before `day_type.office_before` (14:00; later is a stop by, not an office day), logs Office unless it was logged today, and the first time that day returns the office
     /// food (`day_type.office_food`) as the Log Foods From App Shortcut's input. Otherwise an empty list of items.
     func arrivedAtWork(now: Date = Date()) -> String {
         let none = #"{"items": []}"#
@@ -316,7 +316,9 @@ final class Store: ObservableObject {
         f.calendar = Calendar(identifier: .gregorian)
         f.dateFormat = "yyyy-MM-dd"
         let day = f.string(from: now)
-        if Calendar.current.isDateInWeekend(now) || config.holidays.contains(day) { return none }
+        let cutoff = Calendar.current.date(bySettingHour: config.officeBefore.hour, minute: config.officeBefore.minute,
+                                           second: 0, of: now) ?? now
+        if Calendar.current.isDateInWeekend(now) || config.holidays.contains(day) || now >= cutoff { return none }
         if !(last["Office"].map { Calendar.current.isDate($0, inSameDayAs: now) } ?? false) {
             enqueue(OutEvent(name: "Office", kind: "log", at: now))
         }

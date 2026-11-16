@@ -26,8 +26,13 @@ struct AppConfig: Codable {
     var holidays: [String] = []                     // 'YYYY-MM-DD', counted as weekend days
     var dayType: DayTypeConfig?
 
-    struct DayTypeConfig: Codable { var office_food: String? }
+    struct DayTypeConfig: Codable { var office_food: String?; var office_before: String? }
     var officeFood: String { dayType?.office_food ?? "Office Food" }
+    /// An arrival at Work from this time on (HH:mm) isn't an office day (an evening stop by).
+    var officeBefore: (hour: Int, minute: Int) {
+        let p = (dayType?.office_before ?? "14:00").split(separator: ":").compactMap { Int($0) }
+        return (p.first ?? 14, p.count > 1 ? p[1] : 0)
+    }
 
     enum CodingKeys: String, CodingKey {
         case groups, last, running, foodShortcut = "food_shortcut", hiddenDomains = "hidden_domains", holidays, dayType = "day_type"
