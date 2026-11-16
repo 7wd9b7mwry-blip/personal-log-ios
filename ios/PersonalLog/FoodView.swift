@@ -6,6 +6,7 @@ struct FoodView: View {
     @EnvironmentObject var store: Store
     @State private var search = ""
     @State private var chosen: Choice?
+    @State private var askAI = false
 
     struct Choice: Identifiable { let name: String; var id: String { name } }
 
@@ -41,6 +42,11 @@ struct FoodView: View {
                 }
             }
             .searchable(text: $search)
+            .toolbar {
+                ToolbarItem(placement: .topBarTrailing) {
+                    Button { askAI = true } label: { Image(systemName: "sparkles") }
+                }
+            }
             .navigationTitle("Food")
             .navigationBarTitleDisplayMode(.inline)
             .navigationDestination(for: String.self) { category in
@@ -55,6 +61,7 @@ struct FoodView: View {
             }
         }
         .sheet(item: $chosen) { c in RecipeSheet(name: c.name) }
+        .sheet(isPresented: $askAI) { AskAIView(kind: "food") { await store.refresh() } }
     }
 
     private func row(_ name: String) -> some View {

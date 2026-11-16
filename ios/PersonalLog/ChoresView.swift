@@ -236,6 +236,7 @@ final class Chores: ObservableObject {
 struct ChoresView: View {
     @StateObject private var chores = Chores.shared
     @State private var editing: Chore?
+    @State private var askAI = false
 
     var body: some View {
         NavigationStack {
@@ -284,10 +285,14 @@ struct ChoresView: View {
                     NavigationLink { ChoreListView() } label: { Image(systemName: "list.bullet") }
                 }
                 ToolbarItem(placement: .topBarTrailing) {
+                    Button { askAI = true } label: { Image(systemName: "sparkles") }
+                }
+                ToolbarItem(placement: .topBarTrailing) {
                     Button { editing = Chore() } label: { Image(systemName: "plus") }
                 }
             }
             .sheet(item: $editing) { c in ChoreEditView(chore: c) }
+            .sheet(isPresented: $askAI) { AskAIView(kind: "chore") { await chores.refresh() } }
             .task { if chores.loadedAt == nil || Date().timeIntervalSince(chores.loadedAt!) > 60 { await chores.refresh() } }
         }
     }
