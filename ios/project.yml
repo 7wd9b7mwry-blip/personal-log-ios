@@ -37,6 +37,7 @@ targets:
         ITSAppUsesNonExemptEncryption: false
         LSApplicationQueriesSchemes: [shortcuts]
         NSCameraUsageDescription: The Find tab's camera search shows the PC what you are pointing at, to spot a lost item.
+        NSCalendarsFullAccessUsageDescription: The Chores tab plans chores in your free time, so it reads when your calendar events are (busy times only).
         CFBundleURLTypes:
           - CFBundleURLName: personallog
             CFBundleURLSchemes: [personallog]

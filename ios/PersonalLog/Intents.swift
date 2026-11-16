@@ -39,3 +39,30 @@ struct OfficeFoodIntent: AppIntent {
         return .result(value: input)
     }
 }
+
+/// One event through the app's own queue (sent now, or when back online): for the app open / close and place
+/// automations, in place of a Shortcut keeping its own queue file. Kind log, or a session's start / end.
+struct LogEventIntent: AppIntent {
+    static var title: LocalizedStringResource = "Log Event"
+    static var description = IntentDescription("Logs an event to the database through the app's queue (sent when online).")
+
+    @Parameter(title: "Name") var name: String
+    @Parameter(title: "Kind", default: .log) var kind: EventKind
+
+    @MainActor
+    func perform() async throws -> some IntentResult {
+        let n = name.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !n.isEmpty else { return .result() }
+        let store = Store.shared
+        store.enqueue(OutEvent(name: n, kind: kind.rawValue, at: Date()))
+        await store.flush()
+        return .result()
+    }
+}
+
+enum EventKind: String, AppEnum {
+    case log, start, end
+
+    static var typeDisplayRepresentation: TypeDisplayRepresentation = "Kind"
+    static var caseDisplayRepresentations: [EventKind: DisplayRepresentation] = [.log: "Log", .start: "Start", .end: "End"]
+}

@@ -25,6 +25,7 @@ struct RootView: View {
         if store.creds.isComplete {
             TabView {
                 LogView().tabItem { Label("Log", systemImage: "square.grid.2x2") }
+                ChoresView().tabItem { Label("Chores", systemImage: "checklist") }
                 FoodView().tabItem { Label("Food", systemImage: "fork.knife") }
                 ReportView().tabItem { Label("Report", systemImage: "chart.xyaxis.line") }
                 FindView().tabItem { Label("Find", systemImage: "magnifyingglass") }
