@@ -20,19 +20,26 @@ struct PersonalLogApp: App {
 
 struct RootView: View {
     @EnvironmentObject var store: Store
+    @ObservedObject private var chores = Chores.shared
 
     var body: some View {
         if store.creds.isComplete {
-            TabView {
-                LogView().tabItem { Label("Log", systemImage: "square.grid.2x2") }
-                ChoresView().tabItem { Label("Chores", systemImage: "checklist") }
-                FoodView().tabItem { Label("Food", systemImage: "fork.knife") }
-                ReportView().tabItem { Label("Report", systemImage: "chart.xyaxis.line") }
-                FindView().tabItem { Label("Find", systemImage: "magnifyingglass") }
-                NavigationStack { SettingsView() }.tabItem { Label("Settings", systemImage: "gearshape") }
-            }
+            tabs
+                // the wake alarm's "Take photos" opens the photo steps over whichever tab is showing
+                .fullScreenCover(isPresented: $chores.showMorningPhotos) { MorningPhotosView().environmentObject(store) }
         } else {
             NavigationStack { SettingsView() }
+        }
+    }
+
+    private var tabs: some View {
+        TabView {
+            LogView().tabItem { Label("Log", systemImage: "square.grid.2x2") }
+            ChoresView().tabItem { Label("Chores", systemImage: "checklist") }
+            FoodView().tabItem { Label("Food", systemImage: "fork.knife") }
+            ReportView().tabItem { Label("Report", systemImage: "chart.xyaxis.line") }
+            FindView().tabItem { Label("Find", systemImage: "magnifyingglass") }
+            NavigationStack { SettingsView() }.tabItem { Label("Settings", systemImage: "gearshape") }
         }
     }
 }

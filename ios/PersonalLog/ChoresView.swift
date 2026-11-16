@@ -75,6 +75,7 @@ struct Chore: Identifiable, Hashable {
     var trigger: SensorRule?          // due while this matches
     var triggerFixed = false          // a rule the editor can't show (a group of entities, event counts): kept as is
     var doneTrigger: SensorRule?      // done when this matches
+    var alarm = false                 // the wake alarm handles it (Morning photos)
 
     var isSensor: Bool { source == "sensor" }
 
@@ -114,6 +115,7 @@ struct Chore: Identifiable, Hashable {
         trigger = SensorRule(j["trigger"])
         triggerFixed = trigger == nil && j["trigger"] is [String: Any]
         doneTrigger = SensorRule(j["done_trigger"])
+        alarm = j["alarm"] as? Bool ?? false
     }
 
     /// The body of public.app_chore_save.
@@ -224,6 +226,28 @@ final class Chores: ObservableObject {
     @Published var loadedAt: Date?
     @Published var sensors: [SensorInfo] = []
     private var sensorsAt: Date?
+    @Published var morning = MorningSettings()
+    @Published var showMorningPhotos = false   // the alarm's "Take photos" (OpenMorningPhotosIntent)
+
+    /// The morning settings (public.app_morning), then the wake alarms rescheduled from them.
+    func refreshMorning() async {
+        guard Store.shared.creds.isComplete,
+              let data = try? await api.rpc("app_morning"),
+              let j = (try? JSONSerialization.jsonObject(with: data)) as? [String: Any] else { return }
+        morning = MorningSettings(j)
+        await MorningAlarms.sync(morning)
+    }
+
+    func saveMorning(_ m: MorningSettings) async {
+        guard let data = try? await api.rpc("app_morning_save", json: ["p": m.payload]),
+              let j = (try? JSONSerialization.jsonObject(with: data)) as? [String: Any] else {
+            error = "Couldn't save the morning settings"
+            return
+        }
+        morning = MorningSettings(j)
+        await MorningAlarms.sync(morning)
+        await call("app_chores", [:])
+    }
     private let calendar = EKEventStore()
 
     /// The readings a sensor rule can use (public.app_sensors), at most every 2 min.
@@ -243,6 +267,7 @@ final class Chores: ObservableObject {
     func refresh() async {
         await syncCalendar()
         await call("app_chores", [:])
+        await refreshMorning()
     }
 
     func save(_ c: Chore) async { await call("app_chore_save", ["p_chore": c.payload]) }
@@ -412,12 +437,27 @@ struct ChoresView: View {
     @StateObject private var chores = Chores.shared
     @State private var editing: Chore?
     @State private var askAI = false
+    @State private var morningSettings = false
 
     var body: some View {
         NavigationStack {
             List {
                 if let e = chores.error {
                     Text(e).font(.footnote).foregroundStyle(.red)
+                }
+                Section {
+                    if !chores.morning.photosDoneToday {
+                        Button { chores.showMorningPhotos = true } label: {
+                            Label("Take the morning photos", systemImage: "camera.fill")
+                        }
+                    }
+                    Button { morningSettings = true } label: {
+                        LabeledContent("Wake up", value: "\(chores.morning.weekday) weekdays, \(chores.morning.weekend) weekends")
+                    }
+                } header: { Text("Morning") } footer: {
+                    Text(chores.morning.alarmOn
+                         ? "An alarm every \(chores.morning.everyMinutes) min until the face and hand photos are taken."
+                         : "The wake alarm is off.")
                 }
                 holdSection
                 if let today = chores.days.first {
@@ -468,6 +508,7 @@ struct ChoresView: View {
             }
             .sheet(item: $editing) { c in ChoreEditView(chore: c) }
             .sheet(isPresented: $askAI) { AskAIView(kind: "chore") { await chores.refresh() } }
+            .sheet(isPresented: $morningSettings) { MorningSettingsView() }
             .task { if chores.loadedAt == nil || Date().timeIntervalSince(chores.loadedAt!) > 60 { await chores.refresh() } }
         }
     }
