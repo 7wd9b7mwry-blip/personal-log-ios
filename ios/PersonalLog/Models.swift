@@ -26,8 +26,9 @@ struct AppConfig: Codable {
     var holidays: [String] = []                     // 'YYYY-MM-DD', counted as weekend days
     var dayType: DayTypeConfig?
 
-    struct DayTypeConfig: Codable { var office_food: String?; var office_before: String? }
+    struct DayTypeConfig: Codable { var office_food: String?; var office_before: String?; var office_min_minutes: Int? }
     var officeFood: String { dayType?.office_food ?? "Office Food" }
+    var officeMinMinutes: Int { dayType?.office_min_minutes ?? 20 }
     /// An arrival at Work from this time on (HH:mm) isn't an office day (an evening stop by).
     var officeBefore: (hour: Int, minute: Int) {
         let p = (dayType?.office_before ?? "14:00").split(separator: ":").compactMap { Int($0) }

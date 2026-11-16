@@ -307,20 +307,51 @@ final class Store: ObservableObject {
         return text
     }
 
-    /// The "Arrived at Work" action (an iOS automation on arriving at Work): on a working day (not Saturday, Sunday or
-    /// one of the `holidays`), before `day_type.office_before` (14:00; later is a stop by, not an office day), logs Office unless it was logged today, and the first time that day returns the office
-    /// food (`day_type.office_food`) as the Log Foods From App Shortcut's input. Otherwise an empty list of items.
-    func arrivedAtWork(now: Date = Date()) -> String {
-        let none = #"{"items": []}"#
+    // MARK: office day (Intents.swift; iOS automations)
+
+    /// Today's stays at Work as [start, end] (end 0 while there), from the Arrive / Leave automations.
+    private var workStays: [[Double]] {
+        get {
+            guard UserDefaults.standard.string(forKey: "workStaysDay") == dayKey(Date()) else { return [] }
+            return UserDefaults.standard.array(forKey: "workStays") as? [[Double]] ?? []
+        }
+        set {
+            UserDefaults.standard.set(dayKey(Date()), forKey: "workStaysDay")
+            UserDefaults.standard.set(newValue, forKey: "workStays")
+        }
+    }
+
+    private func dayKey(_ d: Date) -> String {
         let f = DateFormatter()
         f.calendar = Calendar(identifier: .gregorian)
         f.dateFormat = "yyyy-MM-dd"
-        let day = f.string(from: now)
-        let cutoff = Calendar.current.date(bySettingHour: config.officeBefore.hour, minute: config.officeBefore.minute,
-                                           second: 0, of: now) ?? now
-        if Calendar.current.isDateInWeekend(now) || config.holidays.contains(day) || now >= cutoff { return none }
+        return f.string(from: d)
+    }
+
+    func arrivedAtWork(now: Date = Date()) { workStays.append([now.timeIntervalSince1970, 0]) }
+
+    func leftWork(now: Date = Date()) {
+        var s = workStays
+        if let i = s.indices.last, s[i][1] == 0 { s[i][1] = now.timeIntervalSince1970; workStays = s }
+    }
+
+    /// The "Office Food" action (a weekday time automation, e.g. 10:00, then Run Shortcut Log Foods From App with its
+    /// result): on a working day (not Saturday, Sunday or one of the `holidays`), once a stay at Work that began before
+    /// `day_type.office_before` (14:00) has lasted `office_min_minutes` (20; walking by isn't an office day), logs
+    /// Office at that arrival (unless logged today) and, once a day, returns the office food (`day_type.office_food`)
+    /// as the Shortcut's input. MacroFactor logs it at the current time. Otherwise an empty list of items.
+    func officeFood(now: Date = Date()) -> String {
+        let none = #"{"items": []}"#
+        let day = dayKey(now)
+        if Calendar.current.isDateInWeekend(now) || config.holidays.contains(day) { return none }
+        let cutoff = (Calendar.current.date(bySettingHour: config.officeBefore.hour, minute: config.officeBefore.minute,
+                                            second: 0, of: now) ?? now).timeIntervalSince1970
+        let minStay = Double(config.officeMinMinutes * 60)
+        guard let stay = workStays.first(where: { $0[0] < cutoff && ($0[1] == 0 ? now.timeIntervalSince1970 : $0[1]) - $0[0] >= minStay })
+        else { return none }
+        let arrived = Date(timeIntervalSince1970: stay[0])
         if !(last["Office"].map { Calendar.current.isDate($0, inSameDayAs: now) } ?? false) {
-            enqueue(OutEvent(name: "Office", kind: "log", at: now))
+            enqueue(OutEvent(name: "Office", kind: "log", at: arrived))
         }
         guard UserDefaults.standard.string(forKey: "officeFoodDay") != day,
               let text = recipeInput(config.officeFood, servings: 1, at: now) else { return none }
