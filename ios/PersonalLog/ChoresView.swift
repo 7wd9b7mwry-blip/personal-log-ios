@@ -23,6 +23,7 @@ struct Chore: Identifiable, Hashable {
     var name = ""
     var room = ""
     var minutes = 10
+    var waitMinutes = 0                // after the active part: the washer, the dryer (free for other chores)
     var everyDays: Double?
     var weekdays: [Int] = []          // ISO: 1 = Monday
     var dueDate: Date?
@@ -69,6 +70,7 @@ struct Chore: Identifiable, Hashable {
         name = j["name"] as? String ?? ""
         room = j["room"] as? String ?? ""
         minutes = (j["minutes"] as? NSNumber)?.intValue ?? 10
+        waitMinutes = (j["wait_minutes"] as? NSNumber)?.intValue ?? 0
         everyDays = (j["every_days"] as? NSNumber)?.doubleValue
         weekdays = (j["weekdays"] as? [NSNumber])?.map(\.intValue) ?? []
         dueDate = (j["due_date"] as? String).flatMap(ChoreTime.day)
@@ -93,7 +95,7 @@ struct Chore: Identifiable, Hashable {
 
     /// The body of public.app_chore_save.
     var payload: [String: Any] {
-        var p: [String: Any] = ["name": name, "room": room, "minutes": minutes, "priority": priority,
+        var p: [String: Any] = ["name": name, "room": room, "minutes": minutes, "wait_minutes": waitMinutes, "priority": priority,
                                 "weekdays": weekdays, "depends_on": dependsOn, "done_event": doneEvent,
                                 "active": active, "notes": notes]
         if let id { p["id"] = id }
@@ -115,6 +117,7 @@ struct PlanItem: Identifiable, Hashable {
     let name: String
     let room: String?
     let minutes: Int
+    let waitMinutes: Int
     let priority: String
     let start: Date
     let end: Date
@@ -130,6 +133,7 @@ struct PlanItem: Identifiable, Hashable {
         name = j["name"] as? String ?? ""
         room = j["room"] as? String
         minutes = (j["minutes"] as? NSNumber)?.intValue ?? 0
+        waitMinutes = (j["wait_minutes"] as? NSNumber)?.intValue ?? 0
         priority = j["priority"] as? String ?? "normal"
         late = j["late"] as? Bool ?? false
         moved = j["moved"] as? Bool ?? false
@@ -572,7 +576,7 @@ struct ChoresView: View {
             VStack(alignment: .leading, spacing: 2) {
                 Text(it.name).fontWeight(it.priority == "must" ? .semibold : .regular)
                 HStack(spacing: 6) {
-                    Text("\(it.minutes) min")
+                    Text("\(it.minutes) min" + (it.waitMinutes > 0 ? ", then \(it.waitMinutes) min wait" : ""))
                     if let r = it.room, !r.isEmpty { Text(r) }
                     if it.late { Text("late").foregroundStyle(.orange) }
                     if it.moved { Text("moved").foregroundStyle(.orange) }
@@ -666,7 +670,9 @@ struct ChoreEditView: View {
                                     id: \.self) { r in Button(r) { chore.room = r } }
                         } label: { Image(systemName: "chevron.down.circle") }
                     }
-                    Stepper("\(chore.minutes) min", value: $chore.minutes, in: 1...240, step: chore.minutes < 10 ? 1 : 5)
+                    Stepper("\(chore.minutes) min active", value: $chore.minutes, in: 1...240, step: chore.minutes < 10 ? 1 : 5)
+                    Stepper(chore.waitMinutes == 0 ? "No wait after" : "Then \(chore.waitMinutes) min wait (free meanwhile)",
+                            value: $chore.waitMinutes, in: 0...480, step: 5)
                     Picker("Priority", selection: $chore.priority) {
                         Text("Must").tag("must")
                         Text("Normal").tag("normal")
