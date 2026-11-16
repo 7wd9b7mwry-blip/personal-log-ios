@@ -1,6 +1,57 @@
 import EventKit
 import SwiftUI
 
+/// A sensor rule (routine.check_rule): a Home Assistant entity compared with a value, optionally held for some minutes.
+struct SensorRule: Hashable {
+    var entity = ""
+    var op = ">"                 // < > = !=
+    var value = ""
+    var forMinutes: Int?
+
+    init() {}
+
+    init?(_ j: Any?) {
+        guard let j = j as? [String: Any], let e = j["entity"] as? String,
+              let o = j["op"] as? String, ["<", ">", "=", "!="].contains(o) else { return nil }
+        entity = e
+        op = o
+        if let n = j["value"] as? NSNumber { value = Fmt.amount(n.doubleValue) } else { value = j["value"] as? String ?? "" }
+        forMinutes = (j["for_minutes"] as? NSNumber)?.intValue
+    }
+
+    var isComplete: Bool { !entity.isEmpty && !value.trimmingCharacters(in: .whitespaces).isEmpty
+        && (op == "=" || op == "!=" || Double(value) != nil) }
+
+    var json: [String: Any] {
+        var j: [String: Any] = ["entity": entity, "op": op]
+        if op == "<" || op == ">", let n = Double(value) { j["value"] = n } else { j["value"] = value.trimmingCharacters(in: .whitespaces) }
+        if let m = forMinutes, m > 0 { j["for_minutes"] = m }
+        return j
+    }
+
+    /// "Humidifier water level below 20 for 10 min"
+    func summary(_ name: String?) -> String {
+        let words = ["<": "below", ">": "above", "=": "is", "!=": "is not"][op] ?? op
+        let who = name ?? entity.split(separator: ".").last.map { $0.replacingOccurrences(of: "_", with: " ") } ?? entity
+        return "\(who) \(words) \(value)" + (forMinutes.map { $0 > 0 ? " for \($0) min" : "" } ?? "")
+    }
+}
+
+/// A reading a rule can use (public.app_sensors).
+struct SensorInfo: Identifiable, Hashable {
+    let entity: String
+    let name: String
+    let state: String
+    let unit: String?
+    var id: String { entity }
+    var numeric: Bool { Double(state) != nil }
+    /// "22.5 %", "on"
+    var reading: String {
+        let v = Double(state).map { Fmt.amount(($0 * 10).rounded() / 10) } ?? state
+        return v + (unit.map { " " + $0 } ?? "")
+    }
+}
+
 /// One chore from public.app_chores(): how often (every N days, on weekdays, once, or when a sensor says so), when
 /// (after / by a clock time), where, what goes first, and its state (last done, deferred).
 struct Chore: Identifiable, Hashable {
@@ -21,12 +72,16 @@ struct Chore: Identifiable, Hashable {
     var notes = ""
     var lastDone: Date?
     var deferredUntil: Date?
+    var trigger: SensorRule?          // due while this matches
+    var triggerFixed = false          // a rule the editor can't show (a group of entities, event counts): kept as is
+    var doneTrigger: SensorRule?      // done when this matches
 
     var isSensor: Bool { source == "sensor" }
 
     /// How often, in words.
     var schedule: String {
-        if isSensor { return notes.isEmpty ? "when its sensor says so" : notes }
+        if let t = trigger { return "when " + t.summary(nil) }
+        if triggerFixed || isSensor { return notes.isEmpty ? "when its sensor says so" : notes }
         if !weekdays.isEmpty {
             let names = ["", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"]
             return weekdays.sorted().map { names[$0] }.joined(separator: ", ")
@@ -56,6 +111,9 @@ struct Chore: Identifiable, Hashable {
         notes = j["notes"] as? String ?? ""
         lastDone = (j["last_done"] as? String).flatMap(ChoreTime.instant)
         deferredUntil = (j["deferred_until"] as? String).flatMap(ChoreTime.instant)
+        trigger = SensorRule(j["trigger"])
+        triggerFixed = trigger == nil && j["trigger"] is [String: Any]
+        doneTrigger = SensorRule(j["done_trigger"])
     }
 
     /// The body of public.app_chore_save.
@@ -68,6 +126,8 @@ struct Chore: Identifiable, Hashable {
         p["due_date"] = dueDate.map(ChoreTime.dayString) ?? ""
         p["after_time"] = afterTime ?? ""
         p["by_time"] = byTime ?? ""
+        if !triggerFixed { p["trigger"] = trigger.map { $0.json as Any } ?? NSNull() }
+        p["done_trigger"] = doneTrigger.map { $0.json as Any } ?? NSNull()
         return p
     }
 }
@@ -162,7 +222,21 @@ final class Chores: ObservableObject {
     @Published var holdUntil: Date?
     @Published var error: String?
     @Published var loadedAt: Date?
+    @Published var sensors: [SensorInfo] = []
+    private var sensorsAt: Date?
     private let calendar = EKEventStore()
+
+    /// The readings a sensor rule can use (public.app_sensors), at most every 2 min.
+    func loadSensors() async {
+        if let t = sensorsAt, Date().timeIntervalSince(t) < 120, !sensors.isEmpty { return }
+        guard Store.shared.creds.isComplete, let data = try? await api.rpc("app_sensors"),
+              let rows = (try? JSONSerialization.jsonObject(with: data)) as? [[String: Any]] else { return }
+        sensors = rows.compactMap { r in
+            guard let e = r["entity"] as? String else { return nil }
+            return SensorInfo(entity: e, name: r["name"] as? String ?? e, state: r["state"] as? String ?? "", unit: r["unit"] as? String)
+        }
+        sensorsAt = Date()
+    }
 
     private var api: API { API(creds: Store.shared.creds) }
 
@@ -507,6 +581,7 @@ struct ChoreEditView: View {
     @State private var hasBy = false
     @State private var hasDue = false
     @State private var confirmDelete = false
+    @State private var hasDoneSensor = false
 
     private let weekdayNames = [(1, "M"), (2, "T"), (3, "W"), (4, "T"), (5, "F"), (6, "S"), (7, "S")]
 
@@ -529,17 +604,20 @@ struct ChoreEditView: View {
                         Text("Low").tag("low")
                     }
                 }
-                if chore.isSensor {
+                if chore.triggerFixed {
                     Section("Due") { Text(chore.schedule).foregroundStyle(.secondary) }
                 } else {
-                    Section("How often") {
+                    Section {
                         Picker("Repeat", selection: $mode) {
-                            Text("Every N days").tag("every")
+                            Text("Every").tag("every")
                             Text("Weekdays").tag("weekdays")
                             Text("Once").tag("once")
+                            Text("Sensor").tag("sensor")
                         }
                         .pickerStyle(.segmented)
                         switch mode {
+                        case "sensor":
+                            SensorRuleEditor(rule: $chore.trigger, holdMinutes: true)
                         case "every":
                             Stepper(chore.everyDays.map { $0 == 1 ? "Daily" : "Every \(Fmt.amount($0)) days" } ?? "Every day",
                                     value: Binding(get: { chore.everyDays ?? 1 }, set: { chore.everyDays = $0 }), in: 1...180, step: 1)
@@ -564,6 +642,8 @@ struct ChoreEditView: View {
                                            displayedComponents: .date)
                             }
                         }
+                    } header: { Text("How often") } footer: {
+                        if mode == "sensor" { Text("Due whenever the reading matches (held that long), e.g. humidifier water below 20.") }
                     }
                     Section {
                         Toggle("Not before", isOn: $hasAfter)
@@ -598,11 +678,13 @@ struct ChoreEditView: View {
                     }
                 } header: { Text("After these (same day)") }
                 Section {
+                    Toggle("Done by a sensor", isOn: $hasDoneSensor)
+                    if hasDoneSensor { SensorRuleEditor(rule: $chore.doneTrigger, holdMinutes: false) }
                     TextField("Done when this event is logged", text: $chore.doneEvent)
                     Toggle("Active", isOn: $chore.active)
                     if !chore.isSensor { TextField("Notes", text: $chore.notes, axis: .vertical) }
-                } footer: {
-                    Text("An event name (e.g. Night Supplements, logged by the bottle sensor) marks it done by itself.")
+                } header: { Text("Done") } footer: {
+                    Text("A sensor (e.g. the dishwasher door opening) or an event (e.g. Night Supplements, from the bottle sensor) marks it done by itself.")
                 }
                 if chore.id != nil {
                     Section {
@@ -617,17 +699,21 @@ struct ChoreEditView: View {
                 ToolbarItem(placement: .confirmationAction) {
                     Button("Save") {
                         var c = chore
-                        if !c.isSensor {
+                        if !c.triggerFixed {
                             if mode != "every" { c.everyDays = nil }
                             if mode != "weekdays" { c.weekdays = [] }
                             if mode != "once" || !hasDue { c.dueDate = nil }
+                            if mode != "sensor" { c.trigger = nil }
                             if mode == "every" && c.everyDays == nil { c.everyDays = 1 }
                             if !hasAfter { c.afterTime = nil }
                             if !hasBy { c.byTime = nil }
                         }
+                        if !hasDoneSensor { c.doneTrigger = nil }
                         Task { await chores.save(c); dismiss() }
                     }
-                    .disabled(chore.name.trimmingCharacters(in: .whitespaces).isEmpty)
+                    .disabled(chore.name.trimmingCharacters(in: .whitespaces).isEmpty
+                              || (mode == "sensor" && !chore.triggerFixed && !(chore.trigger?.isComplete ?? false))
+                              || (hasDoneSensor && !(chore.doneTrigger?.isComplete ?? false)))
                 }
             }
             .confirmationDialog("Remove \(chore.name)?", isPresented: $confirmDelete) {
@@ -636,11 +722,94 @@ struct ChoreEditView: View {
                 }
             }
             .onAppear {
-                mode = !chore.weekdays.isEmpty ? "weekdays" : (chore.everyDays != nil || chore.id == nil) ? "every" : "once"
+                mode = chore.trigger != nil ? "sensor"
+                    : !chore.weekdays.isEmpty ? "weekdays" : (chore.everyDays != nil || chore.id == nil) ? "every" : "once"
                 hasAfter = chore.afterTime != nil
                 hasBy = chore.byTime != nil
                 hasDue = chore.dueDate != nil
+                hasDoneSensor = chore.doneTrigger != nil
+            }
+            .task { await chores.loadSensors() }
+        }
+    }
+}
+
+/// A sensor rule's parts: which reading (picked from the list, with its current value), above / below / is / is not
+/// a value, and (for a due rule) how long it has to hold.
+struct SensorRuleEditor: View {
+    @ObservedObject private var chores = Chores.shared
+    @Binding var rule: SensorRule?
+    let holdMinutes: Bool
+
+    private var r: Binding<SensorRule> { Binding(get: { rule ?? SensorRule() }, set: { rule = $0 }) }
+
+    var body: some View {
+        let sensor = chores.sensors.first { $0.entity == r.wrappedValue.entity }
+        let numeric = sensor?.numeric ?? (r.wrappedValue.op == "<" || r.wrappedValue.op == ">")
+        NavigationLink {
+            SensorPicker { s in
+                var x = r.wrappedValue
+                x.entity = s.entity
+                if s.numeric {
+                    if x.op == "=" || x.op == "!=" { x.op = ">" }
+                } else {
+                    if x.op == "<" || x.op == ">" { x.op = "=" }
+                    if x.value.isEmpty { x.value = s.state }
+                }
+                r.wrappedValue = x
+            }
+        } label: {
+            LabeledContent("Sensor") {
+                Text(sensor.map { "\($0.name) · \($0.reading)" } ?? (r.wrappedValue.entity.isEmpty ? "Choose" : r.wrappedValue.entity))
+                    .lineLimit(2)
             }
         }
+        Picker("When it is", selection: r.op) {
+            if numeric {
+                Text("above").tag(">")
+                Text("below").tag("<")
+            }
+            Text("exactly").tag("=")
+            Text("not").tag("!=")
+        }
+        TextField(numeric ? "Value" : "State (e.g. on, off, full)", text: r.value)
+            .keyboardType(numeric ? .decimalPad : .default)
+            .textInputAutocapitalization(.never)
+        if holdMinutes {
+            Stepper((r.wrappedValue.forMinutes ?? 0) == 0 ? "Right away" : "For \(r.wrappedValue.forMinutes ?? 0) min",
+                    value: Binding(get: { r.wrappedValue.forMinutes ?? 0 },
+                                   set: { r.wrappedValue.forMinutes = $0 == 0 ? nil : $0 }),
+                    in: 0...240, step: 5)
+        }
+    }
+}
+
+/// Every reading a rule can use (public.app_sensors), searchable, with its current value.
+struct SensorPicker: View {
+    @ObservedObject private var chores = Chores.shared
+    @Environment(\.dismiss) private var dismiss
+    let pick: (SensorInfo) -> Void
+    @State private var search = ""
+
+    var body: some View {
+        let shown = chores.sensors.filter {
+            search.isEmpty || $0.name.localizedCaseInsensitiveContains(search) || $0.entity.localizedCaseInsensitiveContains(search)
+        }
+        List(shown) { s in
+            Button {
+                pick(s)
+                dismiss()
+            } label: {
+                VStack(alignment: .leading, spacing: 2) {
+                    Text(s.name).foregroundStyle(Color.primary)
+                    Text("\(s.reading) · \(s.entity)").font(.caption).foregroundStyle(.secondary)
+                }
+            }
+        }
+        .searchable(text: $search, prompt: "CO2, humidifier, door…")
+        .navigationTitle("Sensor")
+        .navigationBarTitleDisplayMode(.inline)
+        .overlay { if chores.sensors.isEmpty { ProgressView() } }
+        .task { await chores.loadSensors() }
     }
 }
