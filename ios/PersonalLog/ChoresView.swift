@@ -143,13 +143,43 @@ struct DoneChore: Identifiable, Hashable {
     var id: String { name + "\(at.timeIntervalSince1970)" }
 }
 
+/// Something the plan works around (routine.day_blocks): a calendar busy time, a hold, a place I'm at or was at.
+struct PlanBlock: Identifiable, Hashable {
+    let kind: String      // busy | hold | place
+    let label: String
+    let start: Date
+    let end: Date?        // nil: still going
+    var id: String { "\(kind)-\(start.timeIntervalSince1970)" }
+
+    init?(_ j: [String: Any]) {
+        guard let s = (j["start"] as? String).flatMap(ChoreTime.instant) else { return nil }
+        kind = j["kind"] as? String ?? "busy"
+        label = j["label"] as? String ?? ""
+        start = s
+        end = (j["end"] as? String).flatMap(ChoreTime.instant)
+    }
+
+    var icon: String { kind == "place" ? "mappin.and.ellipse" : kind == "hold" ? "pause.circle" : "calendar" }
+}
+
+/// A chore or a block in time order, for one list.
+enum PlanRow: Identifiable {
+    case item(PlanItem)
+    case block(PlanBlock)
+    var id: String { switch self { case .item(let i): return "i" + i.id; case .block(let b): return "b" + b.id } }
+    var start: Date { switch self { case .item(let i): return i.start; case .block(let b): return b.start } }
+}
+
 struct PlanDay: Identifiable, Hashable {
     let day: Date
     let weekend: Bool
     let freeMinutes: Int
     let plannedMinutes: Int
     let items: [PlanItem]
+    var blocks: [PlanBlock] = []
     var id: Date { day }
+
+    var rows: [PlanRow] { (items.map { PlanRow.item($0) } + blocks.map { PlanRow.block($0) }).sorted { $0.start < $1.start } }
 }
 
 enum ChoreTime {
@@ -285,7 +315,8 @@ final class Chores: ObservableObject {
             return PlanDay(day: day, weekend: d["weekend"] as? Bool ?? false,
                            freeMinutes: (d["free_minutes"] as? NSNumber)?.intValue ?? 0,
                            plannedMinutes: (d["planned_minutes"] as? NSNumber)?.intValue ?? 0,
-                           items: ((d["items"] as? [[String: Any]]) ?? []).compactMap(PlanItem.init))
+                           items: ((d["items"] as? [[String: Any]]) ?? []).compactMap(PlanItem.init),
+                           blocks: ((d["blocks"] as? [[String: Any]]) ?? []).compactMap(PlanBlock.init))
         }
         holdUntil = ((plan["claim"] as? [String: Any])?["end"] as? String).flatMap(ChoreTime.instant)
         chores = ((r["chores"] as? [[String: Any]]) ?? []).map(Chore.init)
@@ -442,7 +473,7 @@ struct ChoresView: View {
                         if today.items.isEmpty {
                             Text("Nothing left today").foregroundStyle(.secondary)
                         }
-                        ForEach(today.items) { it in row(it, today: true) }
+                        ForEach(today.rows) { r in planRow(r, today: true) }
                     } header: {
                         Text("Today")
                     } footer: {
@@ -458,9 +489,9 @@ struct ChoresView: View {
                     }
                 }
                 ForEach(chores.days.dropFirst()) { d in
-                    if !d.items.isEmpty {
+                    if !d.items.isEmpty || !d.blocks.isEmpty {
                         Section {
-                            ForEach(d.items) { it in row(it, today: false) }
+                            ForEach(d.rows) { r in planRow(r, today: false) }
                         } header: {
                             Text(d.day.formatted(.dateTime.weekday(.wide).month().day()))
                         } footer: {
@@ -511,6 +542,27 @@ struct ChoresView: View {
         } footer: {
             Text("A hold moves the plan after it; opening a distracting app ends it.")
         }
+    }
+
+    @ViewBuilder
+    private func planRow(_ r: PlanRow, today: Bool) -> some View {
+        switch r {
+        case .item(let it): row(it, today: today)
+        case .block(let b): blockRow(b)
+        }
+    }
+
+    /// What the plan works around: gray, with its time span.
+    private func blockRow(_ b: PlanBlock) -> some View {
+        HStack(alignment: .firstTextBaseline) {
+            Text(b.start.formatted(date: .omitted, time: .shortened))
+                .font(.subheadline.monospacedDigit()).frame(width: 72, alignment: .leading)
+            Label(b.label, systemImage: b.icon)
+            Spacer()
+            Text(b.end.map { "until " + $0.formatted(date: .omitted, time: .shortened) } ?? "now")
+                .font(.caption)
+        }
+        .foregroundStyle(.secondary)
     }
 
     private func row(_ it: PlanItem, today: Bool) -> some View {
