@@ -51,7 +51,11 @@ struct Chore: Identifiable, Hashable {
         if triggerFixed || isSensor { return notes.isEmpty ? "when its sensor says so" : notes }
         if !weekdays.isEmpty {
             let names = ["", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"]
-            return weekdays.sorted().map { names[$0] }.joined(separator: ", ")
+            let days = weekdays.sorted().map { names[$0] }
+            if let n = everyDays {   // one of these days, once every n days
+                return (n == 7 ? "once a week" : "every \(Fmt.amount(n)) days") + ", " + days.joined(separator: " or ")
+            }
+            return days.joined(separator: ", ")
         }
         if let n = everyDays { return n == 1 ? "daily" : n == 7 ? "weekly" : "every \(Fmt.amount(n)) days" }
         if let d = dueDate { return "once, by " + d.formatted(.dateTime.weekday(.abbreviated).month().day()) }
@@ -648,6 +652,8 @@ struct ChoreEditView: View {
                                     .buttonStyle(.plain)
                                 }
                             }
+                            Toggle("Just one of these days a week", isOn: Binding(get: { chore.everyDays != nil },
+                                                                                  set: { chore.everyDays = $0 ? 7 : nil }))
                         default:
                             Toggle("By a date", isOn: $hasDue)
                             if hasDue {
@@ -720,7 +726,7 @@ struct ChoreEditView: View {
                     Button("Save") {
                         var c = chore
                         if !c.triggerFixed {
-                            if mode != "every" { c.everyDays = nil }
+                            if mode != "every" && mode != "weekdays" { c.everyDays = nil }   // weekdays + every: one of them
                             if mode != "weekdays" { c.weekdays = [] }
                             if mode != "once" || !hasDue { c.dueDate = nil }
                             if mode != "sensor" { c.due = nil }
