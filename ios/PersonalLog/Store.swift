@@ -138,7 +138,12 @@ final class Store: ObservableObject {
         do {
             let dec = JSONDecoder()
             dec.dateDecodingStrategy = .iso8601
+            let hiddenBefore = config.hiddenDomains
             config = try dec.decode(AppConfig.self, from: try await api.rpc("app_config"))
+            if config.hiddenDomains != hiddenBefore {   // the saved report again, with the new hidden domains
+                report = (try? Data(contentsOf: dir.appendingPathComponent("report_data.json")))
+                    .flatMap { try? JSONDecoder().decode(ReportData.self, from: $0) }?.pruned(hidden: config.hiddenDomains) ?? report
+            }
             if let book = try? dec.decode(RecipeBook.self, from: try await api.rpc("macrofactor_recipes")) { recipes = book }
             running = config.running
             last = config.last

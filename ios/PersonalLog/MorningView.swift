@@ -157,10 +157,11 @@ struct MorningPhotosView: View {
     @State private var sending = false
     @State private var error: String?
 
-    private let steps: [(name: String, hint: String, front: Bool)] = [
-        ("Face", "Look straight at the camera, even light, no glasses", true),
-        ("Left Hand", "Back of the left hand, fingers spread, nails in view", false),
-        ("Right Hand", "Back of the right hand, fingers spread, nails in view", false),
+    // `name` is what the photo is sent as (the nightly scoring picks its measures by it); the screen only shows `title`
+    private let steps: [(name: String, title: String, hint: String, front: Bool)] = [
+        ("Face", "Photo front", "Front camera, straight on, no glasses", true),
+        ("Left Hand", "Photo left", "Back camera, left side, fingers spread, nails in view", false),
+        ("Right Hand", "Photo right", "Back camera, right side, fingers spread, nails in view", false),
     ]
 
     var body: some View {
@@ -170,7 +171,7 @@ struct MorningPhotosView: View {
                     Image(systemName: "camera.fill")
                         .font(.system(size: 72)).foregroundStyle(.orange)
                     Text("Morning photos").font(.title.bold())
-                    Text("Photo \(step + 1) of \(steps.count)").font(.headline).foregroundStyle(.secondary)
+                    Text("\(steps[step].title) (\(step + 1) of \(steps.count))").font(.headline).foregroundStyle(.secondary)
                     Text(steps[step].hint).multilineTextAlignment(.center).foregroundStyle(.secondary)
                     Button {
                         camera = true
