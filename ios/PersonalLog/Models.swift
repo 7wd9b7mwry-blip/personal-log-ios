@@ -23,8 +23,15 @@ struct AppConfig: Codable {
     var running: [String: Date] = [:]
     var foodShortcut: String = "Log Foods From App"
     var hiddenDomains: [String] = ["appearance"]   // left out of the Report tab
+    var holidays: [String] = []                     // 'YYYY-MM-DD', counted as weekend days
+    var dayType: DayTypeConfig?
 
-    enum CodingKeys: String, CodingKey { case groups, last, running, foodShortcut = "food_shortcut", hiddenDomains = "hidden_domains" }
+    struct DayTypeConfig: Codable { var office_food: String? }
+    var officeFood: String { dayType?.office_food ?? "Office Food" }
+
+    enum CodingKeys: String, CodingKey {
+        case groups, last, running, foodShortcut = "food_shortcut", hiddenDomains = "hidden_domains", holidays, dayType = "day_type"
+    }
 
     init() {}
 
@@ -35,6 +42,8 @@ struct AppConfig: Codable {
         running = try c.decodeIfPresent([String: Date].self, forKey: .running) ?? [:]
         foodShortcut = try c.decodeIfPresent(String.self, forKey: .foodShortcut) ?? "Log Foods From App"
         hiddenDomains = try c.decodeIfPresent([String].self, forKey: .hiddenDomains) ?? ["appearance"]
+        holidays = try c.decodeIfPresent([String].self, forKey: .holidays) ?? []
+        dayType = try? c.decodeIfPresent(DayTypeConfig.self, forKey: .dayType)
     }
 }
 

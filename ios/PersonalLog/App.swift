@@ -2,7 +2,7 @@ import SwiftUI
 
 @main
 struct PersonalLogApp: App {
-    @StateObject private var store = Store()
+    @StateObject private var store = Store.shared
     @Environment(\.scenePhase) private var phase
 
     var body: some Scene {

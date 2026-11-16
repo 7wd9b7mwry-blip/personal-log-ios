@@ -6,6 +6,7 @@ import UIKit
 /// on disk, so a tap with no signal is sent later), sessions running and the recent taps.
 @MainActor
 final class Store: ObservableObject {
+    static let shared = Store()   // the app and its Shortcuts actions (Intents.swift) share one
     @Published var creds = Credentials.load()
     @Published var config = AppConfig()
     @Published var recipes = RecipeBook()
@@ -276,8 +277,13 @@ final class Store: ObservableObject {
     /// Logs a recipe: habit amounts go straight to the database; the foods and water go to the Shortcut (only a Shortcut
     /// can call MacroFactor's Log Foods), which comes back to the app when done.
     func logRecipe(_ name: String, servings: Double) -> URL? {
+        guard recipes.recipes[name] != nil, let text = recipeInput(name, servings: servings, at: takeTime()) else { return nil }
+        return shortcutURL(config.foodShortcut, input: text)
+    }
+
+    /// The Shortcut's input for a recipe (its habit amounts are queued here); nil without foods or water.
+    func recipeInput(_ name: String, servings: Double, at: Date) -> String? {
         guard let recipe = recipes.recipes[name] else { return nil }
-        let at = takeTime()
         var items: [[String: Any]] = []
         for it in recipe.items {
             switch it.kind {
@@ -288,7 +294,7 @@ final class Store: ObservableObject {
                 items.append(line)
             case "water":
                 let oz = (it.fl_oz ?? 0) * servings
-                items.append(["kind": "water", "fl_oz": oz, "ml": (oz * 29.5735).rounded()])   // MacroFactor's water takes mL
+                items.append(["kind": "water", "fl_oz": oz, "ml": (oz * 29.5735).rounded()])   // Apple Health, in mL
             default:
                 if let p = it.prefix {
                     enqueue(OutEvent(name: p, kind: "val", at: at, val: (it.value ?? 0) * servings, unit: it.unit))
@@ -298,7 +304,26 @@ final class Store: ObservableObject {
         guard !items.isEmpty,
               let json = try? JSONSerialization.data(withJSONObject: ["recipe": name, "time": Fmt.iso(at), "items": items]),
               let text = String(data: json, encoding: .utf8) else { return nil }
-        return shortcutURL(config.foodShortcut, input: text)
+        return text
+    }
+
+    /// The "Arrived at Work" action (an iOS automation on arriving at Work): on a working day (not Saturday, Sunday or
+    /// one of the `holidays`) logs Office unless it was logged today, and the first time that day returns the office
+    /// food (`day_type.office_food`) as the Log Foods From App Shortcut's input. Otherwise an empty list of items.
+    func arrivedAtWork(now: Date = Date()) -> String {
+        let none = #"{"items": []}"#
+        let f = DateFormatter()
+        f.calendar = Calendar(identifier: .gregorian)
+        f.dateFormat = "yyyy-MM-dd"
+        let day = f.string(from: now)
+        if Calendar.current.isDateInWeekend(now) || config.holidays.contains(day) { return none }
+        if !(last["Office"].map { Calendar.current.isDate($0, inSameDayAs: now) } ?? false) {
+            enqueue(OutEvent(name: "Office", kind: "log", at: now))
+        }
+        guard UserDefaults.standard.string(forKey: "officeFoodDay") != day,
+              let text = recipeInput(config.officeFood, servings: 1, at: now) else { return none }
+        UserDefaults.standard.set(day, forKey: "officeFoodDay")
+        return text
     }
 
     private func shortcutURL(_ shortcut: String, input: String) -> URL? {

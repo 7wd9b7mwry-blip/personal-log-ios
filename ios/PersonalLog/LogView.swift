@@ -1,48 +1,102 @@
 import SwiftUI
 
-/// The buttons, grouped as in the server's `app` setting. A session button shows how long it has been running; the
-/// others when they were last logged.
+/// The button groups of the server's `app` setting as a menu (tap one for its buttons), with the sessions running now
+/// on top so they can be stopped in one tap. A session button shows how long it has been running; the others when
+/// they were last logged.
 struct LogView: View {
     @EnvironmentObject var store: Store
     @State private var amountFor: ButtonSpec?
-
-    private let columns = [GridItem(.adaptive(minimum: 104), spacing: 10)]
 
     var body: some View {
         NavigationStack {
             VStack(spacing: 0) {
                 TimeBar()
-                ScrollView {
-                    StatusLine()
+                StatusLine()
+                List {
+                    let running = store.config.groups.flatMap(\.buttons).filter { store.running[$0.name] != nil }
+                    if !running.isEmpty {
+                        Section("Running") {
+                            ButtonGrid(buttons: running, amountFor: $amountFor)
+                                .listRowInsets(EdgeInsets(top: 8, leading: 8, bottom: 8, trailing: 8))
+                        }
+                    }
+                    Section {
+                        ForEach(store.config.groups) { g in
+                            NavigationLink(value: g) {
+                                LabeledContent {
+                                    Text(summary(g))
+                                } label: {
+                                    Label(g.title, systemImage: Self.icon(g.title))
+                                }
+                            }
+                        }
+                    }
+                }
+                .overlay {
                     if store.config.groups.isEmpty {
                         ContentUnavailableView("No buttons yet", systemImage: "square.grid.2x2",
                                                description: Text("Pull to refresh once connected."))
-                    }
-                    TimelineView(.periodic(from: .now, by: 30)) { ctx in
-                        LazyVStack(alignment: .leading, spacing: 16) {
-                            ForEach(store.config.groups) { g in
-                                Text(g.title).font(.headline).padding(.horizontal)
-                                LazyVGrid(columns: columns, spacing: 10) {
-                                    ForEach(g.buttons) { b in
-                                        tile(b, now: ctx.date)
-                                    }
-                                }
-                                .padding(.horizontal)
-                            }
-                        }
-                        .padding(.vertical)
                     }
                 }
                 .refreshable { await store.refresh(); await store.flush() }
             }
             .navigationTitle("Log")
             .navigationBarTitleDisplayMode(.inline)
+            .navigationDestination(for: ButtonGroup.self) { g in
+                VStack(spacing: 0) {
+                    TimeBar()
+                    StatusLine()
+                    ScrollView {
+                        ButtonGrid(buttons: g.buttons, amountFor: $amountFor).padding()
+                    }
+                    .refreshable { await store.refresh(); await store.flush() }
+                }
+                .navigationTitle(g.title)
+                .navigationBarTitleDisplayMode(.inline)
+            }
             .toolbar {
                 ToolbarItem(placement: .topBarTrailing) {
                     NavigationLink { RecentView() } label: { Image(systemName: "clock.arrow.circlepath") }
                 }
             }
-            .sheet(item: $amountFor) { b in AmountSheet(button: b) }
+        }
+        .sheet(item: $amountFor) { b in AmountSheet(button: b) }
+    }
+
+    /// What's running in the group, else the last thing logged in it today.
+    private func summary(_ g: ButtonGroup) -> String {
+        if let r = g.buttons.first(where: { store.running[$0.name] != nil }) { return "● " + r.name }
+        let today = g.buttons.compactMap { b in store.last[b.name].map { (b.name, $0) } }
+            .filter { Calendar.current.isDateInToday($0.1) }.max { $0.1 < $1.1 }
+        return today?.0 ?? ""
+    }
+
+    static func icon(_ title: String) -> String {
+        switch title.lowercased() {
+        case "day": return "calendar"
+        case "sessions": return "stopwatch"
+        case "routine": return "checklist"
+        case "medication": return "pills"
+        case "symptoms": return "cross.case"
+        case "supplements": return "leaf"
+        default: return "square.grid.2x2"
+        }
+    }
+}
+
+/// Buttons as tiles.
+struct ButtonGrid: View {
+    @EnvironmentObject var store: Store
+    let buttons: [ButtonSpec]
+    @Binding var amountFor: ButtonSpec?
+
+    private let columns = [GridItem(.adaptive(minimum: 104), spacing: 10)]
+
+    var body: some View {
+        TimelineView(.periodic(from: .now, by: 30)) { ctx in
+            LazyVGrid(columns: columns, spacing: 10) {
+                ForEach(buttons) { b in tile(b, now: ctx.date) }
+            }
         }
     }
 

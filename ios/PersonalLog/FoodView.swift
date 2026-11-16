@@ -15,20 +15,20 @@ struct FoodView: View {
                 TimeBar()
                 StatusLine()
                 List {
-                    ForEach(store.recipes.sections(matching: search), id: \.0) { category, names in
-                        Section(category) {
-                            ForEach(names, id: \.self) { name in
-                                Button { chosen = Choice(name: name) } label: {
-                                    HStack {
-                                        Text(name).foregroundStyle(Color.primary)
-                                        Spacer()
-                                        if store.recipes.recipes[name]?.items.contains(where: { $0.kind == "water" }) == true {
-                                            Image(systemName: "drop.fill").foregroundStyle(.blue)
-                                        }
-                                        Image(systemName: "chevron.right").font(.caption).foregroundStyle(.tertiary)
-                                    }
+                    if search.isEmpty {
+                        // categories first; tap one for its recipes
+                        ForEach(store.recipes.sections(matching: ""), id: \.0) { category, names in
+                            NavigationLink(value: category) {
+                                LabeledContent {
+                                    Text("\(names.count)")
+                                } label: {
+                                    Label(category, systemImage: Self.icon(category))
                                 }
                             }
+                        }
+                    } else {
+                        ForEach(store.recipes.sections(matching: search), id: \.0) { category, names in
+                            Section(category) { ForEach(names, id: \.self) { row($0) } }
                         }
                     }
                 }
@@ -43,7 +43,41 @@ struct FoodView: View {
             .searchable(text: $search)
             .navigationTitle("Food")
             .navigationBarTitleDisplayMode(.inline)
-            .sheet(item: $chosen) { c in RecipeSheet(name: c.name) }
+            .navigationDestination(for: String.self) { category in
+                VStack(spacing: 0) {
+                    TimeBar()
+                    List {
+                        ForEach(store.recipes.sections(matching: "").first { $0.0 == category }?.1 ?? [], id: \.self) { row($0) }
+                    }
+                }
+                .navigationTitle(category)
+                .navigationBarTitleDisplayMode(.inline)
+            }
+        }
+        .sheet(item: $chosen) { c in RecipeSheet(name: c.name) }
+    }
+
+    private func row(_ name: String) -> some View {
+        Button { chosen = Choice(name: name) } label: {
+            HStack {
+                Text(name).foregroundStyle(Color.primary)
+                Spacer()
+                if store.recipes.recipes[name]?.items.contains(where: { $0.kind == "water" }) == true {
+                    Image(systemName: "drop.fill").foregroundStyle(.blue)
+                }
+                Image(systemName: "chevron.right").font(.caption).foregroundStyle(.tertiary)
+            }
+        }
+    }
+
+    static func icon(_ category: String) -> String {
+        switch category.lowercased() {
+        case "breakfast": return "sunrise"
+        case "drinks": return "cup.and.saucer"
+        case "meals": return "fork.knife"
+        case "snacks": return "carrot"
+        case "desserts": return "birthday.cake"
+        default: return "tag"
         }
     }
 }
