@@ -109,7 +109,11 @@ struct CondLeaf: Identifiable, Hashable {
         case "photos": j = ["photos": ["Face", "Left Hand", "Right Hand"]]
         default: return (try? JSONSerialization.jsonObject(with: Data(raw.utf8))) ?? NSNull()
         }
-        return negate ? ["not": j] : j
+        if negate {
+            let wrapped: [String: Any] = ["not": j]
+            return wrapped
+        }
+        return j
     }
 
     func summary(_ sensors: [SensorInfo]) -> String {
@@ -159,7 +163,13 @@ struct ChoreCondition: Hashable {
 
     var isComplete: Bool { !leaves.isEmpty && leaves.allSatisfy(\.isComplete) }
 
-    var json: Any { leaves.count == 1 ? leaves[0].json : [any ? "any" : "all": leaves.map(\.json)] }
+    var json: Any {
+        if leaves.count == 1 { return leaves[0].json }
+        let key = any ? "any" : "all"
+        let list: [Any] = leaves.map { $0.json }
+        let group: [String: Any] = [key: list]
+        return group
+    }
 
     func summary(_ sensors: [SensorInfo]) -> String {
         leaves.map { $0.summary(sensors) }.joined(separator: any ? " or " : " and ")
