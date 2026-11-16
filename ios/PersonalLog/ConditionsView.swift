@@ -22,7 +22,9 @@ struct CondLeaf: Identifiable, Hashable {
         ("sensor", "A sensor reading"), ("room", "I'm in a room"), ("time", "Time of day"), ("weekday", "Weekdays"),
         ("event", "An event was logged"), ("no_event", "Nothing logged for a while"), ("chore", "Another chore is done"),
         ("weight", "I weighed in"), ("photos", "The morning photos are taken"),
+        ("at", "I'm at a place"), ("ble", "A Bluetooth device was heard"),
     ]
+    static let places = ["BJJ", "YMCA", "Work", "Movie Theater", "Outside Key Places", "Bradley Apt"]
 
     init() {}
 
@@ -51,6 +53,10 @@ struct CondLeaf: Identifiable, Hashable {
             kind = "no_event"
             name = (j["no_event"] as? String) ?? ((j["no_event"] as? [String])?.joined(separator: ", ") ?? "")
             minutes = (j["minutes"] as? NSNumber)?.intValue ?? 60
+        } else if let n = j["at"] as? String {
+            kind = "at"; name = n
+        } else if let n = j["ble"] as? String {
+            kind = "ble"; name = n; minutes = (j["within_minutes"] as? NSNumber)?.intValue ?? 0
         } else if let n = j["chore_done"] as? String {
             kind = "chore"; name = n
         } else if j["weight"] as? Bool == true {
@@ -76,7 +82,7 @@ struct CondLeaf: Identifiable, Hashable {
         case "room": return !room.isEmpty
         case "time": return !after.isEmpty || !before.isEmpty
         case "weekday": return !weekdays.isEmpty
-        case "event", "chore": return !name.trimmingCharacters(in: .whitespaces).isEmpty
+        case "event", "chore", "at", "ble": return !name.trimmingCharacters(in: .whitespaces).isEmpty
         case "no_event": return !name.trimmingCharacters(in: .whitespaces).isEmpty && minutes > 0
         default: return true
         }
@@ -105,6 +111,10 @@ struct CondLeaf: Identifiable, Hashable {
             j = ["no_event": name.split(separator: ",").map { $0.trimmingCharacters(in: .whitespaces) }.filter { !$0.isEmpty },
                  "minutes": max(minutes, 1)]
         case "chore": j = ["chore_done": name]
+        case "at": j = ["at": name]
+        case "ble":
+            j = ["ble": name.trimmingCharacters(in: .whitespaces)]
+            if minutes > 0 { j["within_minutes"] = minutes }
         case "weight": j = ["weight": true]
         case "photos": j = ["photos": ["Face", "Left Hand", "Right Hand"]]
         default: return (try? JSONSerialization.jsonObject(with: Data(raw.utf8))) ?? NSNull()
@@ -134,6 +144,8 @@ struct CondLeaf: Identifiable, Hashable {
         case "event": s = name.isEmpty ? "Name the event" : "\(name) logged" + (minutes > 0 ? " in the last \(minutes) min" : " today")
         case "no_event": s = name.isEmpty ? "Name the events" : "no \(name) for \(minutes) min"
         case "chore": s = name.isEmpty ? "Choose a chore" : "\(name) is done"
+        case "at": s = name.isEmpty ? "Choose a place" : "I'm at \(name)"
+        case "ble": s = name.isEmpty ? "Name the device" : "\(name) heard" + (minutes > 0 ? " in the last \(minutes) min" : "")
         case "weight": s = "weighed in"
         case "photos": s = "morning photos taken"
         default: s = "(set by the AI) " + raw
@@ -306,6 +318,15 @@ struct LeafEditor: View {
                 Text("Choose").tag("")
                 ForEach(chores.chores.map(\.name).sorted(), id: \.self) { n in Text(n).tag(n) }
             }
+        case "at":
+            Picker("Place", selection: $leaf.name) {
+                Text("Choose").tag("")
+                ForEach(CondLeaf.places, id: \.self) { p in Text(p).tag(p) }
+            }
+        case "ble":
+            TextField("Device name (e.g. Philips Sonicare)", text: $leaf.name).textInputAutocapitalization(.never)
+            Stepper(leaf.minutes == 0 ? "Since it was due (or the last 30 min)" : "In the last \(leaf.minutes) min",
+                    value: $leaf.minutes, in: 0...720, step: 15)
         case "raw":
             Text(leaf.raw).font(.caption.monospaced())
             Text("Ask the AI to change this one, or pick a kind above to replace it.").font(.footnote).foregroundStyle(.secondary)
