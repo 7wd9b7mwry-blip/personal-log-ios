@@ -101,7 +101,7 @@ struct ReportHome: View {
                             CardRow(route: .metric(t.target)) {
                                 Text("\(t.habit) \(Self.span(t))").font(.system(size: 14, weight: .semibold)).foregroundStyle(Theme.text)
                                 Muted(text: "\(r.name(t.target)) \(t.helps ? "better" : "worse"): "
-                                      + "\(Units.format(t.typical_effect, r.metric(t.target)?.unit, weightUnit: r.weightUnit))"
+                                      + "\(Units.signed(t.typical_effect ?? 0, r.metric(t.target)?.unit, weightUnit: r.weightUnit))"
                                       + " · typically \(t.typical_amount ?? "")")
                             }
                         }
@@ -585,7 +585,7 @@ struct TryRow: View {
             Text("\(t.more ? "More" : "Less") \(r.name(t.lever))").font(.system(size: 14, weight: .semibold)).foregroundStyle(Theme.text)
             Badge(robust: t.robust, strongLabel: "stronger evidence")
         }
-        Muted(text: "Aim \(Units.format(t.aim.first ?? nil, u, weightUnit: r.weightUnit))–\(Units.format(t.aim.last ?? nil, u, weightUnit: r.weightUnit))"
+        Muted(text: "Aim \(Units.span(t.aim.first ?? nil, t.aim.last ?? nil, u, weightUnit: r.weightUnit))"
               + " \(Self.per(t.horizon)) · your usual \(Units.format(t.usual, u, weightUnit: r.weightUnit))")
         Muted(text: t.targets.prefix(3).map { r.name($0.target) }.joined(separator: ", ")
               + (t.costs.isEmpty ? "" : " · \(t.costs.count) trade-off\(t.costs.count == 1 ? "" : "s")")).lineLimit(1)
@@ -622,7 +622,7 @@ struct SuggestionView: View {
         let unit = x.percent == true ? "percent" : r.metric(x.target)?.unit
         return CardRow(route: .pair(lever: t.lever, target: x.target)) {
             Text(r.name(x.target)).font(.system(size: 14, weight: .semibold)).foregroundStyle(Theme.text)
-            Muted(text: "\((x.expected ?? 0) >= 0 ? "+" : "−")\(Units.format(abs(x.expected ?? 0), unit, weightUnit: r.weightUnit)) expected · "
+            Muted(text: "\(Units.signed(x.expected ?? 0, unit, weightUnit: r.weightUnit)) expected · "
                   + String(format: "%+.2f SD per SD · p = %.3f", x.effect_sd ?? 0, x.p ?? 1) + (x.trend.map { " · \($0)" } ?? ""))
         }
     }

@@ -28,7 +28,7 @@ struct MetricView: View {
                         ForEach(timing) { t in
                             CardRow {
                                 Text("\(t.habit) \(ReportHome.span(t))").font(.system(size: 14, weight: .semibold)).foregroundStyle(Theme.text)
-                                Muted(text: "\(t.helps ? "Better" : "Worse") by " + Units.format(abs(t.typical_effect ?? 0), m?.unit, weightUnit: r.weightUnit)
+                                Muted(text: "\(t.helps ? "Better" : "Worse") by " + String(Units.signed(abs(t.typical_effect ?? 0), m?.unit, weightUnit: r.weightUnit).dropFirst())
                                       + " (typically \(t.typical_amount ?? ""), \(t.n_span ?? 0) nights)")
                             }
                         }

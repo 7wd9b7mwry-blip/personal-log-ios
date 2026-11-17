@@ -401,7 +401,8 @@ enum Units {
             if a >= 3600 { let m = Int((a / 60).rounded()); return "\(sign)\(m / 60)h \(String(format: "%02d", m % 60))m" }
             if a < 600 { let s = Int(a.rounded()); return s >= 60 ? "\(sign)\(s / 60)m \(String(format: "%02d", s % 60))s" : "\(sign)\(s) s" }
             return "\(sign)\(Int((a / 60).rounded())) min"
-        case "h": return String(format: "%.1f h", v)
+        case "h": return clock(v)
+        case "celsius": return String(format: "%.2f °C", v)
         case "percent", "%": return String(format: "%.1f%%", v)
         case "count", "score", "integer", "ordinal": return String(format: "%.0f", v)
         case "bpm": return String(format: "%.0f bpm", v)
@@ -413,8 +414,27 @@ enum Units {
         }
     }
 
+    /// Hours after midnight as a clock time, like report.clock; past 24 is after midnight (27.4 -> 3:24 AM).
+    static func clock(_ h: Double) -> String {
+        let m = ((Int((h * 60).rounded()) % 1440) + 1440) % 1440
+        return "\((m / 60) % 12 == 0 ? 12 : (m / 60) % 12):\(String(format: "%02d", m % 60)) \(m < 720 ? "AM" : "PM")"
+    }
+
+    /// A change with its sign, like report.Ctx.signed: a clock time's change as a duration.
+    static func signed(_ v: Double, _ unit: String?, weightUnit: String = "lb") -> String {
+        let (x, u) = unit == "h" ? (v * 3600, "s") : (v, unit)
+        return (x >= 0 ? "+" : "−") + format(abs(x), u, weightUnit: weightUnit)
+    }
+
+    /// A range lo–hi, one value when both ends read the same ("4", not "4–4"), like report.Ctx.span.
+    static func span(_ lo: Double?, _ hi: Double?, _ unit: String?, weightUnit: String = "lb") -> String {
+        let a = format(lo, unit, weightUnit: weightUnit), b = format(hi, unit, weightUnit: weightUnit)
+        return a == b ? a : "\(a)–\(b)"
+    }
+
     /// A unit key as a label: ml_per_kg_min -> ml/kg/min, breaths_per_min -> breaths/min, finger_widths -> finger widths.
     static func label(_ u: String) -> String {
+        if let named = ["fl_oz_us": "fl oz", "fahrenheit": "°F", "degrees": "°", "deg": "°"][u] { return named }
         let per = u.replacingOccurrences(of: "_per_", with: "/")
         return per.replacingOccurrences(of: "_", with: per.contains("/") ? "/" : " ")
     }
