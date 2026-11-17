@@ -40,6 +40,43 @@ struct OfficeFoodIntent: AppIntent {
     }
 }
 
+/// Food queued for MacroFactor from elsewhere (the watch, Muse; public.app_food_queue_*), for the Shortcut run by the
+/// automation "When I receive a notification from Home Assistant, title contains Log food" (Run Immediately):
+/// Take Queued Food -> if it has a value: Run Shortcut "Log Foods From App" with it -> Mark Queued Food Logged.
+/// Take returns every open item as one input of Log Foods From App ("" when there's nothing) and remembers their ids
+/// for Mark; an item never marked is pushed again after 10 min.
+struct TakeQueuedFoodIntent: AppIntent {
+    static var title: LocalizedStringResource = "Take Queued Food"
+    static var description = IntentDescription("Everything queued for MacroFactor, as the input of Log Foods From App (empty when none).")
+
+    @MainActor
+    func perform() async throws -> some IntentResult & ReturnsValue<String> {
+        let creds = Store.shared.creds
+        guard creds.isComplete else { return .result(value: "") }
+        let data = try await API(creds: creds).rpc("app_food_queue_take", json: [:])
+        let r = (try? JSONSerialization.jsonObject(with: data)) as? [String: Any] ?? [:]
+        guard let ids = r["ids"] as? [NSNumber], let input = r["input"],
+              let json = try? JSONSerialization.data(withJSONObject: input),
+              let text = String(data: json, encoding: .utf8) else { return .result(value: "") }
+        UserDefaults.standard.set(ids.map(\.int64Value), forKey: "foodQueueTaken")
+        return .result(value: text)
+    }
+}
+
+struct MarkQueuedFoodLoggedIntent: AppIntent {
+    static var title: LocalizedStringResource = "Mark Queued Food Logged"
+    static var description = IntentDescription("Marks what Take Queued Food returned as logged in MacroFactor.")
+
+    @MainActor
+    func perform() async throws -> some IntentResult {
+        let ids = (UserDefaults.standard.array(forKey: "foodQueueTaken") as? [Int64]) ?? []
+        guard !ids.isEmpty, Store.shared.creds.isComplete else { return .result() }
+        _ = try await API(creds: Store.shared.creds).rpc("app_food_queue_done", json: ["p_ids": ids])
+        UserDefaults.standard.removeObject(forKey: "foodQueueTaken")
+        return .result()
+    }
+}
+
 /// One event through the app's own queue (sent now, or when back online): for the app open / close and place
 /// automations, in place of a Shortcut keeping its own queue file. Kind log, or a session's start / end.
 struct LogEventIntent: AppIntent {
