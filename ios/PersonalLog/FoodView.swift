@@ -7,6 +7,7 @@ struct FoodView: View {
     @State private var search = ""
     @State private var chosen: Choice?
     @State private var askAI = false
+    @State private var openMore: Set<String> = []
 
     struct Choice: Identifiable { let name: String; var id: String { name } }
     struct Subgroup: Hashable { let category: String; let name: String? }   // nil: the recipes in none
@@ -56,14 +57,21 @@ struct FoodView: View {
                     List {
                         let names = store.recipes.sections(matching: "").first { $0.0 == category }?.1 ?? []
                         let groups = store.recipes.groups(names)
+                        let split = store.recipes.usual(names)
+                        let usual = split.0, rest = split.1
+                        // the usual few first; everything else (by subgroup when there are some) under More
+                        ForEach(usual, id: \.self) { row($0) }
                         if groups.count <= 1 {
-                            ForEach(names, id: \.self) { row($0) }
+                            more(rest, all: usual.isEmpty)
                         } else {
-                            // subgroups first, like the categories; tap one for its recipes
-                            ForEach(groups, id: \.0) { sub, ns in
-                                NavigationLink(value: Subgroup(category: category, name: sub)) {
-                                    LabeledContent { Text("\(ns.count)") } label: { Text(sub ?? "Other") }
-                                }
+                            Section {
+                                DisclosureGroup(isExpanded: expanded(category, all: usual.isEmpty)) {
+                                    ForEach(groups, id: \.0) { sub, ns in
+                                        NavigationLink(value: Subgroup(category: category, name: sub)) {
+                                            LabeledContent { Text("\(ns.count)") } label: { Text(sub ?? "Other") }
+                                        }
+                                    }
+                                } label: { Text("More").foregroundStyle(.secondary) }
                             }
                         }
                     }
@@ -76,7 +84,10 @@ struct FoodView: View {
                     TimeBar()
                     List {
                         let names = store.recipes.sections(matching: "").first { $0.0 == g.category }?.1 ?? []
-                        ForEach(store.recipes.groups(names).first { $0.0 == g.name }?.1 ?? [], id: \.self) { row($0) }
+                        let split = store.recipes.usual(store.recipes.groups(names).first { $0.0 == g.name }?.1 ?? [])
+                        let usual = split.0, rest = split.1
+                        ForEach(usual, id: \.self) { row($0) }
+                        more(rest, all: usual.isEmpty)
                     }
                 }
                 .navigationTitle(g.name ?? "Other")
@@ -85,6 +96,25 @@ struct FoodView: View {
         }
         .sheet(item: $chosen) { c in RecipeSheet(name: c.name) }
         .sheet(isPresented: $askAI) { AskAIView(kind: "food") { await store.refresh() } }
+    }
+
+    /// The recipes not used lately, folded under More (open when nothing was used lately).
+    @ViewBuilder
+    private func more(_ names: [String], all: Bool) -> some View {
+        if all {
+            ForEach(names, id: \.self) { row($0) }
+        } else if !names.isEmpty {
+            Section {
+                DisclosureGroup {
+                    ForEach(names, id: \.self) { row($0) }
+                } label: { Text("More (\(names.count))").foregroundStyle(.secondary) }
+            }
+        }
+    }
+
+    private func expanded(_ key: String, all: Bool) -> Binding<Bool> {
+        Binding(get: { all || openMore.contains(key) },
+                set: { if $0 { openMore.insert(key) } else { openMore.remove(key) } })
     }
 
     private func row(_ name: String) -> some View {

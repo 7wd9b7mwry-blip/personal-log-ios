@@ -283,6 +283,8 @@ final class Store: ObservableObject {
     /// can call MacroFactor's Log Foods), which comes back to the app when done.
     func logRecipe(_ name: String, servings: Double) -> URL? {
         guard recipes.recipes[name] != nil, let text = recipeInput(name, servings: servings, at: takeTime()) else { return nil }
+        let api = API(creds: creds)
+        Task { _ = try? await api.rpc("app_recipe_used", json: ["p_name": name]) }   // for the usual-first order
         return shortcutURL(config.foodShortcut, input: text)
     }
 
