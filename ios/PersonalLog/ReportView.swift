@@ -86,16 +86,6 @@ struct ReportHome: View {
         ScrollView {
             LazyVStack(spacing: 14) {
                 InsightCard(page: .home, auto: true, title: "Worth a look")
-                if let ai = r.ai {
-                    Card(title: "Summary") {
-                        Text(ai.headline).font(.system(size: 15, weight: .semibold)).foregroundStyle(Theme.text).padding(.bottom, 6)
-                        ForEach(ai.bullets, id: \.self) { b in Text("• " + b).font(.system(size: 14)).foregroundStyle(Theme.text).padding(.bottom, 4) }
-                        ForEach(ai.tries, id: \.self) { t in
-                            Text("💡 " + t).font(.system(size: 14)).padding(10).frame(maxWidth: .infinity, alignment: .leading)
-                                .background(Theme.aiBg, in: RoundedRectangle(cornerRadius: 8)).padding(.top, 6)
-                        }
-                    }
-                }
                 Card(title: "Your key metrics", intro: "Tap one for its chart, what drives it and everything related.") {
                     ForEach(r.keyMetrics) { k in CardRow(route: .metric(k.id)) { KeyRow(r: r, k: k) } }
                 }
