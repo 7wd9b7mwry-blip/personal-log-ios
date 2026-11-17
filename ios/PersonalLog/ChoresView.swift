@@ -153,7 +153,10 @@ struct PlanBlock: Identifiable, Hashable {
     let label: String
     let start: Date
     let end: Date?        // nil: still going
-    var id: String { "\(kind)-\(start.timeIntervalSince1970)" }
+    let away: Bool        // a calendar event not at home: stops blocking once I'm home
+    let key: String?      // the calendar event (every occurrence), to mark it home / away
+    let cutHome: Bool     // ended early: I got home
+    var id: String { "\(kind)-\(start.timeIntervalSince1970)-\(key ?? label)" }
 
     init?(_ j: [String: Any]) {
         guard let s = (j["start"] as? String).flatMap(ChoreTime.instant) else { return nil }
@@ -161,6 +164,9 @@ struct PlanBlock: Identifiable, Hashable {
         label = j["label"] as? String ?? ""
         start = s
         end = (j["end"] as? String).flatMap(ChoreTime.instant)
+        away = j["away"] as? Bool ?? false
+        key = j["key"] as? String
+        cutHome = (j["cut"] as? String) == "home"
     }
 
     var icon: String { kind == "place" ? "mappin.and.ellipse" : kind == "hold" ? "pause.circle" : "calendar" }
@@ -293,6 +299,12 @@ final class Chores: ObservableObject {
     /// "Need N min first" (0 ends the hold).
     func hold(_ minutes: Int) async { await call("app_claim", ["p_minutes": minutes]) }
 
+    /// A calendar event (all its occurrences) at home (blocks chores throughout) or away (stops blocking when I get
+    /// home); nil: back to the guess from its location and title.
+    func markEvent(_ key: String, away: Bool?) async {
+        await call("app_busy_mark", ["p_key": key, "p_away": away.map { $0 as Any } ?? NSNull()])
+    }
+
     /// A refresh if the last one is over 15 min old (the Log Event action calls it, so the shared list stays current).
     func refreshIfStale() async {
         if loadedAt.map({ Date().timeIntervalSince($0) > 900 }) ?? true { await refresh() }
@@ -342,7 +354,10 @@ final class Chores: ObservableObject {
         let to = from.addingTimeInterval(8 * 86400)
         let events = calendar.events(matching: calendar.predicateForEvents(withStart: from, end: to, calendars: nil))
         let blocks: [[String: Any]] = events.filter { !$0.isAllDay && $0.availability != .free }
-            .map { ["start": Fmt.iso($0.startDate), "end": Fmt.iso($0.endDate)] }
+            .map { e -> [String: Any] in
+                ["start": Fmt.iso(e.startDate), "end": Fmt.iso(e.endDate), "title": e.title ?? "",
+                 "location": e.location ?? "", "key": e.calendarItemIdentifier]
+            }
         _ = try? await api.rpc("app_busy", json: ["p_from": Fmt.iso(from), "p_to": Fmt.iso(to), "p_blocks": blocks])
     }
 
@@ -561,12 +576,25 @@ struct ChoresView: View {
         HStack(alignment: .firstTextBaseline) {
             Text(b.start.formatted(date: .omitted, time: .shortened))
                 .font(.subheadline.monospacedDigit()).frame(width: 72, alignment: .leading)
-            Label(b.label, systemImage: b.icon)
+            VStack(alignment: .leading, spacing: 2) {
+                Label(b.label, systemImage: b.icon)
+                if b.kind == "busy" {
+                    Text(b.cutHome ? "Away, ended when you got home" : b.away ? "Away: stops blocking once you're home"
+                         : "At home: blocks chores throughout").font(.caption2)
+                }
+            }
             Spacer()
             Text(b.end.map { "until " + $0.formatted(date: .omitted, time: .shortened) } ?? "now")
                 .font(.caption)
         }
         .foregroundStyle(.secondary)
+        .contextMenu {
+            if b.kind == "busy", let key = b.key {
+                Button("At home (blocks chores)", systemImage: "house") { Task { await chores.markEvent(key, away: false) } }
+                Button("Away (stops when I'm home)", systemImage: "car") { Task { await chores.markEvent(key, away: true) } }
+                Button("Guess from the location", systemImage: "wand.and.stars") { Task { await chores.markEvent(key, away: nil) } }
+            }
+        }
     }
 
     private func row(_ it: PlanItem, today: Bool) -> some View {
