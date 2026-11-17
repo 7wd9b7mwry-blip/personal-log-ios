@@ -39,6 +39,7 @@ struct RootView: View {
             FoodView().tabItem { Label("Food", systemImage: "fork.knife") }
             ReportView().tabItem { Label("Report", systemImage: "chart.xyaxis.line") }
             FindView().tabItem { Label("Find", systemImage: "magnifyingglass") }
+            IssuesView().tabItem { Label("Issues", systemImage: "ladybug") }
             NavigationStack { SettingsView() }.tabItem { Label("Settings", systemImage: "gearshape") }
         }
     }

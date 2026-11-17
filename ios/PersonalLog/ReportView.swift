@@ -454,9 +454,7 @@ struct ReviewCard: View {
                     Text("\(issues.filter { !$0.fixed }.count) open").font(.system(size: 14, weight: .semibold)).foregroundStyle(Theme.sub)
                 }
                 .padding(.top, 10)
-                ForEach(issues) { i in
-                    NavigationLink { IssueView(issue: i) } label: { IssueRow(issue: i) }.buttonStyle(.plain)
-                }
+                Muted(text: "The issue log is under More → Issues.")
             }
         }
     }
