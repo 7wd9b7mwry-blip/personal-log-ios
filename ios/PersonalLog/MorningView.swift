@@ -10,10 +10,11 @@ struct MorningSettings: Equatable {
     var weekday = "07:30"
     var weekend = "09:00"
     var alarmOn = true
+    var afterMinutes = 5        // the first alarm this long after the wake-up (the bed, blinds and lights go first)
     var everyMinutes = 5
     var count = 6
     var photosDoneToday = false
-    var wakes: [Date] = []          // the next three mornings' wake times, from Home Assistant's wake-up schedule
+    var wakes: [Date] = []          // the next seven mornings' wake times, from Home Assistant's wake-up schedule
     var fromHomeAssistant = false
 
     init() {}
@@ -23,6 +24,7 @@ struct MorningSettings: Equatable {
         weekend = j["weekend"] as? String ?? "09:00"
         let a = j["alarm"] as? [String: Any] ?? [:]
         alarmOn = a["on"] as? Bool ?? true
+        afterMinutes = (a["after_minutes"] as? NSNumber)?.intValue ?? 5
         everyMinutes = (a["every_minutes"] as? NSNumber)?.intValue ?? 5
         count = (a["count"] as? NSNumber)?.intValue ?? 6
         photosDoneToday = j["photos_done_today"] as? Bool ?? false
@@ -36,7 +38,7 @@ struct MorningSettings: Equatable {
     }
 
     var payload: [String: Any] {
-        ["weekday": weekday, "weekend": weekend, "alarm": ["on": alarmOn, "every_minutes": everyMinutes, "count": count]]
+        ["weekday": weekday, "weekend": weekend, "alarm": ["on": alarmOn, "after_minutes": afterMinutes, "every_minutes": everyMinutes, "count": count]]
     }
 
     /// The wake time on a day (holidays from the app settings count as weekend).
@@ -48,8 +50,9 @@ struct MorningSettings: Equatable {
     }
 }
 
-/// The wake alarm, Wayk style: an alarm at the wake time and another every `everyMinutes`, `count` in all, for the next
-/// three days. Stopping one only waits for the next; the chain is cancelled once the morning photos are taken. Alarms
+/// The wake alarm, Wayk style: an alarm `afterMinutes` after the wake time (the Eight Sleep, blinds and lights start at
+/// it) and another every `everyMinutes`, `count` in all, for the next seven days (refreshed in the background too, so
+/// it keeps going without the app opened). Stopping one only waits for the next; the chain is cancelled once the morning photos are taken. Alarms
 /// are AlarmKit's (iOS 26), so they ring through silent mode and Focus; "Take photos" on the alarm opens the camera.
 @MainActor
 enum MorningAlarms {
@@ -61,14 +64,14 @@ enum MorningAlarms {
         var wanted: [String: Date] = [:]
         if m.alarmOn, await authorized() {
             let holidays = Store.shared.config.holidays
-            for offset in 0..<3 {
+            for offset in 0..<7 {
                 guard let day = Calendar.current.date(byAdding: .day, value: offset, to: Date()) else { continue }
                 if offset == 0 && m.photosDoneToday { continue }
                 // Home Assistant's wake-up schedule when the server sent it, else the app's own times
                 let fromServer = m.wakes.first { Calendar.current.isDate($0, inSameDayAs: day) }
                 guard let wake = fromServer ?? m.wake(on: day, holidays: holidays) else { continue }
                 for i in 0..<max(1, m.count) {
-                    let at = wake.addingTimeInterval(Double(i * max(1, m.everyMinutes) * 60))
+                    let at = wake.addingTimeInterval(Double(max(0, m.afterMinutes) * 60 + i * max(1, m.everyMinutes) * 60))
                     if at > Date().addingTimeInterval(30) { wanted[Fmt.iso(at)] = at }
                 }
             }
@@ -303,11 +306,12 @@ struct MorningSettingsView: View {
                 Section {
                     Toggle("Alarm until the photos are taken", isOn: $m.alarmOn)
                     if m.alarmOn {
+                        Stepper("Starts \(m.afterMinutes) min after the wake-up", value: $m.afterMinutes, in: 0...30)
                         Stepper("Again every \(m.everyMinutes) min", value: $m.everyMinutes, in: 1...30)
                         Stepper("\(m.count) alarms", value: $m.count, in: 1...12)
                     }
                 } footer: {
-                    Text("Stopping an alarm only waits for the next one. Taking the morning photos ends today's.")
+                    Text("The bed, blinds and lights start at the wake-up; the alarm follows. Stopping an alarm only waits for the next one. Taking the morning photos ends today's.")
                 }
             }
             .navigationTitle("Morning")

@@ -1,3 +1,4 @@
+import BackgroundTasks
 import SwiftUI
 
 @main
@@ -14,7 +15,22 @@ struct PersonalLogApp: App {
         }
         .onChange(of: phase) { _, p in
             if p == .active { Task { await store.refresh(); await store.flush() } }
+            if p == .background { Self.scheduleMorningRefresh() }
         }
+        // the wake alarms follow Home Assistant's wake-up schedule without the app opened: iOS wakes the app now and
+        // then (a few times a day at most) to reschedule them
+        .backgroundTask(.appRefresh(Self.morningTask)) {
+            Self.scheduleMorningRefresh()
+            await Chores.shared.refreshMorning()
+        }
+    }
+
+    nonisolated static let morningTask = "morning-alarms"
+
+    nonisolated static func scheduleMorningRefresh() {
+        let r = BGAppRefreshTaskRequest(identifier: morningTask)
+        r.earliestBeginDate = Date().addingTimeInterval(3 * 3600)
+        try? BGTaskScheduler.shared.submit(r)
     }
 }
 
