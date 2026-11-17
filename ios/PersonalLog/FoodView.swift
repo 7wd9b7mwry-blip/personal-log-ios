@@ -9,6 +9,7 @@ struct FoodView: View {
     @State private var askAI = false
 
     struct Choice: Identifiable { let name: String; var id: String { name } }
+    struct Subgroup: Hashable { let category: String; let name: String? }   // nil: the recipes in none
 
     var body: some View {
         NavigationStack {
@@ -58,13 +59,27 @@ struct FoodView: View {
                         if groups.count <= 1 {
                             ForEach(names, id: \.self) { row($0) }
                         } else {
+                            // subgroups first, like the categories; tap one for its recipes
                             ForEach(groups, id: \.0) { sub, ns in
-                                Section(sub ?? "Other") { ForEach(ns, id: \.self) { row($0) } }
+                                NavigationLink(value: Subgroup(category: category, name: sub)) {
+                                    LabeledContent { Text("\(ns.count)") } label: { Text(sub ?? "Other") }
+                                }
                             }
                         }
                     }
                 }
                 .navigationTitle(category)
+                .navigationBarTitleDisplayMode(.inline)
+            }
+            .navigationDestination(for: Subgroup.self) { g in
+                VStack(spacing: 0) {
+                    TimeBar()
+                    List {
+                        let names = store.recipes.sections(matching: "").first { $0.0 == g.category }?.1 ?? []
+                        ForEach(store.recipes.groups(names).first { $0.0 == g.name }?.1 ?? [], id: \.self) { row($0) }
+                    }
+                }
+                .navigationTitle(g.name ?? "Other")
                 .navigationBarTitleDisplayMode(.inline)
             }
         }
