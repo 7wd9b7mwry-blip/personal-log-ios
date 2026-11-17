@@ -139,6 +139,26 @@ struct AppClosedIntent: AppIntent {
     }
 }
 
+/// Whatever a Shortcut hands it (a MacroFactor action's result, ...), saved as given (ingest.shortcut_payload) to be
+/// read and parsed on the server.
+struct SaveToLogIntent: AppIntent {
+    static var title: LocalizedStringResource = "Save to Personal Log"
+    static var description = IntentDescription("Saves the input as it is (text, a dictionary, an action's result) for the database to read.")
+
+    @Parameter(title: "Input") var input: String
+    @Parameter(title: "Source", default: "MacroFactor") var source: String
+
+    static var parameterSummary: some ParameterSummary { Summary("Save \(\.$input) from \(\.$source)") }
+
+    @MainActor
+    func perform() async throws -> some IntentResult & ReturnsValue<String> {
+        let creds = Store.shared.creds
+        guard creds.isComplete else { throw APIError.notConfigured }
+        _ = try await API(creds: creds).rpc("app_shortcut_payload", json: ["p_source": source, "p_payload": input])
+        return .result(value: "Saved")
+    }
+}
+
 @MainActor
 enum AppSessionLog {
     static func log(_ app: String, _ kind: String) async {
@@ -159,5 +179,7 @@ struct LogShortcuts: AppShortcutsProvider {
                     shortTitle: "App Closed", systemImageName: "xmark.app")
         AppShortcut(intent: LogEventIntent(), phrases: ["Log an event in \(.applicationName)"],
                     shortTitle: "Log Event", systemImageName: "square.and.pencil")
+        AppShortcut(intent: SaveToLogIntent(), phrases: ["Save to \(.applicationName)"],
+                    shortTitle: "Save to Personal Log", systemImageName: "tray.and.arrow.down")
     }
 }
