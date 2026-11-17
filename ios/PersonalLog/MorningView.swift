@@ -53,7 +53,8 @@ struct MorningSettings: Equatable {
 /// The wake alarm, Wayk style: an alarm `afterMinutes` after the wake time (the Eight Sleep, blinds and lights start at
 /// it) and another every `everyMinutes`, `count` in all, for the next seven days (refreshed in the background too, so
 /// it keeps going without the app opened). Stopping one only waits for the next; the chain is cancelled once the morning photos are taken. Alarms
-/// are AlarmKit's (iOS 26), so they ring through silent mode and Focus; "Take photos" on the alarm opens the camera.
+/// are AlarmKit's (iOS 26), so they ring through silent mode and Focus. "I'm up" on the alarm stops the Eight Sleep
+/// alarm at once and opens the photos; "Snooze" waits for the next alarm; "Can't today" in the photos is the way out.
 @MainActor
 enum MorningAlarms {
     private static let key = "morningAlarms"   // [ISO date: alarm UUID]
@@ -86,6 +87,13 @@ enum MorningAlarms {
         UserDefaults.standard.set(scheduled, forKey: key)
     }
 
+    /// The Eight Sleep alarm off now (public.app_home_action -> the add-on presses its dismiss button).
+    static func stopBed() async {
+        let creds = Store.shared.creds
+        guard creds.isComplete else { return }
+        _ = try? await API(creds: creds).rpc("app_home_action", json: ["p_action": "bed_alarm_stop"])
+    }
+
     /// Today's photos are in: the rest of today's alarms go.
     static func cancelToday() {
         guard #available(iOS 26.0, *) else { return }
@@ -114,9 +122,9 @@ enum MorningAlarms {
     @available(iOS 26.0, *)
     private static func schedule(_ at: Date) async -> UUID? {
         let alert = AlarmPresentation.Alert(
-            title: "Morning photos",
-            stopButton: AlarmButton(text: "Stop", textColor: .white, systemImageName: "stop.circle"),
-            secondaryButton: AlarmButton(text: "Take photos", textColor: .white, systemImageName: "camera.fill"),
+            title: "Wake up",
+            stopButton: AlarmButton(text: "Snooze", textColor: .white, systemImageName: "zzz"),
+            secondaryButton: AlarmButton(text: "I'm up", textColor: .white, systemImageName: "camera.fill"),
             secondaryButtonBehavior: .custom)
         let attributes = AlarmAttributes<MorningAlarmData>(presentation: AlarmPresentation(alert: alert),
                                                           metadata: MorningAlarmData(), tintColor: .orange)
@@ -136,15 +144,17 @@ enum MorningAlarms {
 @available(iOS 26.0, *)
 struct MorningAlarmData: AlarmMetadata {}
 
-/// The alarm's "Take photos" button: opens the app on the photo steps.
+/// The alarm's "I'm up" button: stops the Eight Sleep alarm (the add-on, within ~10 s) and opens the app on the photo
+/// steps. The phone's own alarms keep coming until the photos are in (or "Can't today").
 @available(iOS 26.0, *)
 struct OpenMorningPhotosIntent: LiveActivityIntent {
-    static var title: LocalizedStringResource = "Take morning photos"
+    static var title: LocalizedStringResource = "I'm up"
     static var openAppWhenRun = true
 
     @MainActor
     func perform() async throws -> some IntentResult {
         Chores.shared.showMorningPhotos = true
+        await MorningAlarms.stopBed()
         return .result()
     }
 }
@@ -159,6 +169,7 @@ struct MorningPhotosView: View {
     @State private var camera = false
     @State private var sending = false
     @State private var error: String?
+    @State private var askSkip = false
 
     // `name` is what the photo is sent as (the nightly scoring picks its measures by it); the screen only shows `title`
     private let steps: [(name: String, title: String, hint: String, front: Bool)] = [
@@ -195,7 +206,17 @@ struct MorningPhotosView: View {
             .frame(maxHeight: .infinity)
             .navigationTitle("Morning photos")
             .navigationBarTitleDisplayMode(.inline)
-            .toolbar { ToolbarItem(placement: .cancellationAction) { Button("Later") { dismiss() } } }
+            .toolbar {
+                ToolbarItem(placement: .cancellationAction) { Button("Later") { dismiss() } }
+                if step < steps.count {
+                    ToolbarItem(placement: .primaryAction) { Button("Can't today") { askSkip = true } }
+                }
+            }
+            .confirmationDialog("Skip the morning photos today?", isPresented: $askSkip, titleVisibility: .visible) {
+                Button("Skip today", role: .destructive) { Task { await skip() } }
+            } message: {
+                Text("Today's alarms stop, the bed's alarm too, and the photos come back tomorrow.")
+            }
             .fullScreenCover(isPresented: $camera) {
                 CameraPicker(front: steps[min(step, steps.count - 1)].front) { image in
                     camera = false
@@ -226,6 +247,18 @@ struct MorningPhotosView: View {
         } catch {
             self.error = "Couldn't send it: \(error.localizedDescription). Try again."
         }
+    }
+
+    /// The way out (traveling, the camera broke, ...): today's alarms and the bed's stop, Morning photos waits for
+    /// tomorrow, and the skip is logged.
+    private func skip() async {
+        MorningAlarms.cancelToday()
+        await MorningAlarms.stopBed()
+        store.enqueue(OutEvent(name: "Morning Photos Skipped", kind: "log", at: Date()))
+        await store.flush()
+        if let c = chores.chores.first(where: { $0.alarm }), let id = c.id { await chores.act(id, "tomorrow") }
+        await chores.refreshMorning()
+        dismiss()
     }
 
     private func finish() async {

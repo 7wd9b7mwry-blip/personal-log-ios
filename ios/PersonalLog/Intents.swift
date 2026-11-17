@@ -104,3 +104,60 @@ enum EventKind: String, AppEnum {
     static var typeDisplayRepresentation: TypeDisplayRepresentation = "Kind"
     static var caseDisplayRepresentations: [EventKind: DisplayRepresentation] = [.log: "Log", .start: "Start", .end: "End"]
 }
+
+/// The app open / close automations ("When TikTok is opened / closed", Run Immediately), one action each instead of a
+/// Shortcut that builds the event and posts it: the event goes through the app's queue (sent now, or when back online)
+/// with the time it ran, so the sessions (events.app_intervals) and the chores' distraction buzzes
+/// (routine.distracted) see it. Name the app as in analysis.setting apps.names / routine.distracting.
+struct AppOpenedIntent: AppIntent {
+    static var title: LocalizedStringResource = "App Opened"
+    static var description = IntentDescription("Logs that an app was opened (the start of its session), for the app automations.")
+
+    @Parameter(title: "App") var app: String
+
+    static var parameterSummary: some ParameterSummary { Summary("\(\.$app) opened") }
+
+    @MainActor
+    func perform() async throws -> some IntentResult {
+        await AppSessionLog.log(app, "start")
+        return .result()
+    }
+}
+
+struct AppClosedIntent: AppIntent {
+    static var title: LocalizedStringResource = "App Closed"
+    static var description = IntentDescription("Logs that an app was closed (the end of its session), for the app automations.")
+
+    @Parameter(title: "App") var app: String
+
+    static var parameterSummary: some ParameterSummary { Summary("\(\.$app) closed") }
+
+    @MainActor
+    func perform() async throws -> some IntentResult {
+        await AppSessionLog.log(app, "end")
+        return .result()
+    }
+}
+
+@MainActor
+enum AppSessionLog {
+    static func log(_ app: String, _ kind: String) async {
+        let n = app.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !n.isEmpty else { return }
+        let store = Store.shared
+        store.enqueue(OutEvent(name: n, kind: kind, at: Date()))
+        await store.flush()
+    }
+}
+
+/// The actions show up in Shortcuts under the app without building a shortcut first.
+struct LogShortcuts: AppShortcutsProvider {
+    static var appShortcuts: [AppShortcut] {
+        AppShortcut(intent: AppOpenedIntent(), phrases: ["Log an app opened in \(.applicationName)"],
+                    shortTitle: "App Opened", systemImageName: "arrow.up.forward.app")
+        AppShortcut(intent: AppClosedIntent(), phrases: ["Log an app closed in \(.applicationName)"],
+                    shortTitle: "App Closed", systemImageName: "xmark.app")
+        AppShortcut(intent: LogEventIntent(), phrases: ["Log an event in \(.applicationName)"],
+                    shortTitle: "Log Event", systemImageName: "square.and.pencil")
+    }
+}

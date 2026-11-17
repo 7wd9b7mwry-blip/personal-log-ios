@@ -101,7 +101,7 @@ struct RecipeSheet: View {
         NavigationStack {
             Form {
                 Section(recipe?.prompt ?? "How many?") {
-                    Stepper(value: $servings, in: 0.5...20, step: 0.5) {
+                    Stepper(value: $servings, in: 1...20, step: 1) {
                         Text(Fmt.amount(servings) + (servings == 1 ? " serving" : " servings"))
                             .font(.title3.monospacedDigit())
                     }
