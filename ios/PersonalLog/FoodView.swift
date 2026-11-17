@@ -53,7 +53,15 @@ struct FoodView: View {
                 VStack(spacing: 0) {
                     TimeBar()
                     List {
-                        ForEach(store.recipes.sections(matching: "").first { $0.0 == category }?.1 ?? [], id: \.self) { row($0) }
+                        let names = store.recipes.sections(matching: "").first { $0.0 == category }?.1 ?? []
+                        let groups = store.recipes.groups(names)
+                        if groups.count <= 1 {
+                            ForEach(names, id: \.self) { row($0) }
+                        } else {
+                            ForEach(groups, id: \.0) { sub, ns in
+                                Section(sub ?? "Other") { ForEach(ns, id: \.self) { row($0) } }
+                            }
+                        }
                     }
                 }
                 .navigationTitle(category)

@@ -271,6 +271,7 @@ struct MorningPhotosView: View {
 /// The system camera (front or back), returning the photo or nil when cancelled.
 struct CameraPicker: UIViewControllerRepresentable {
     let front: Bool
+    var flash = true
     let done: (UIImage?) -> Void
 
     func makeUIViewController(context: Context) -> UIImagePickerController {
@@ -279,7 +280,7 @@ struct CameraPicker: UIViewControllerRepresentable {
         if p.sourceType == .camera {
             p.cameraDevice = front && UIImagePickerController.isCameraDeviceAvailable(.front) ? .front : .rear
             // flash on every shot, so the light is the same each morning (the front camera flashes the screen)
-            if UIImagePickerController.isFlashAvailable(for: p.cameraDevice) { p.cameraFlashMode = .on }
+            if UIImagePickerController.isFlashAvailable(for: p.cameraDevice) { p.cameraFlashMode = flash ? .on : .auto }
         }
         p.delegate = context.coordinator
         return p

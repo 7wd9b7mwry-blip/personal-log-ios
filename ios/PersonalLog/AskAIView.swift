@@ -1,3 +1,4 @@
+import PhotosUI
 import SwiftUI
 
 /// One "ask the AI to add it" request (public.app_ai_tasks): open / running on the PC, then done with a summary or
@@ -8,6 +9,7 @@ struct AITask: Identifiable, Hashable {
     let status: String
     let summary: String?
     let error: String?
+    let photo: Bool
 
     init?(_ j: [String: Any]) {
         guard let id = (j["id"] as? NSNumber)?.intValue else { return nil }
@@ -16,6 +18,7 @@ struct AITask: Identifiable, Hashable {
         status = j["status"] as? String ?? "open"
         summary = j["summary"] as? String
         error = j["error"] as? String
+        photo = j["photo"] as? Bool ?? false
     }
 
     var pending: Bool { status == "open" || status == "running" }
@@ -34,6 +37,9 @@ struct AskAIView: View {
     @State private var tasks: [AITask] = []
     @State private var error: String?
     @State private var sending = false
+    @State private var image: UIImage?
+    @State private var pick: PhotosPickerItem?
+    @State private var camera = false
     @FocusState private var focused: Bool
 
     private var placeholder: String {
@@ -48,15 +54,33 @@ struct AskAIView: View {
                     TextField(placeholder, text: $text, axis: .vertical)
                         .lineLimit(2...6)
                         .focused($focused)
+                    if kind == "food" {
+                        HStack {
+                            Button { camera = true } label: { Label("Camera", systemImage: "camera") }
+                                .buttonStyle(.borderless)
+                            Spacer()
+                            PhotosPicker(selection: $pick, matching: .images) { Label("Photo", systemImage: "photo") }
+                                .buttonStyle(.borderless)
+                        }
+                        if let image {
+                            HStack {
+                                Image(uiImage: image).resizable().scaledToFill()
+                                    .frame(width: 64, height: 64).clipShape(RoundedRectangle(cornerRadius: 8))
+                                Spacer()
+                                Button("Remove", role: .destructive) { self.image = nil; pick = nil }
+                                    .buttonStyle(.borderless)
+                            }
+                        }
+                    }
                     Button {
                         Task { await send() }
                     } label: {
                         Label(sending ? "Sending…" : "Ask", systemImage: "sparkles")
                     }
-                    .disabled(sending || text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+                    .disabled(sending || (text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty && image == nil))
                 } footer: {
                     Text(kind == "food"
-                         ? "Claude finds the nutrition facts online and adds the foods to the right category, with the water a drink holds (to Apple Health). It can also make combos (\"split a Red Bull and a coconut water\") and delete recipes you name. Takes about a minute."
+                         ? "Claude finds the nutrition facts online and adds the foods to the right category, with the water a drink holds (to Apple Health). A photo of the food or its label works too, with or without words. It can also make combos (\"split a Red Bull and a coconut water\") and delete recipes you name. Takes about a minute."
                          : "Claude adds or changes chores, with when, where, how long and what goes first.")
                 }
                 if let error { Text(error).font(.footnote).foregroundStyle(.red) }
@@ -64,7 +88,10 @@ struct AskAIView: View {
                     Section("Recent") {
                         ForEach(tasks) { t in
                             VStack(alignment: .leading, spacing: 4) {
-                                Text(t.request).font(.subheadline)
+                                HStack(spacing: 4) {
+                                    if t.photo { Image(systemName: "photo").font(.caption).foregroundStyle(.secondary) }
+                                    Text(t.request).font(.subheadline)
+                                }
                                 HStack(alignment: .firstTextBaseline, spacing: 6) {
                                     switch t.status {
                                     case "done": Image(systemName: "checkmark.circle.fill").foregroundStyle(.green)
@@ -83,6 +110,20 @@ struct AskAIView: View {
             .navigationBarTitleDisplayMode(.inline)
             .toolbar { ToolbarItem(placement: .confirmationAction) { Button("Done") { dismiss() } } }
             .task { await poll() }
+            .onChange(of: pick) { _, item in
+                Task {
+                    if let data = try? await item?.loadTransferable(type: Data.self), let img = UIImage(data: data) {
+                        image = img
+                    }
+                }
+            }
+            .fullScreenCover(isPresented: $camera) {
+                CameraPicker(front: false, flash: false) { img in
+                    if let img { image = img }
+                    camera = false
+                }
+                .ignoresSafeArea()
+            }
             .onAppear { focused = true }
         }
     }
@@ -91,8 +132,15 @@ struct AskAIView: View {
         sending = true
         defer { sending = false }
         do {
-            _ = try await API(creds: store.creds).rpc("app_ai_ask", json: ["p_kind": kind, "p_text": text])
+            var args: [String: Any] = ["p_kind": kind, "p_text": text]
+            // ~1280 px is plenty to read a label and see a plate
+            if let image, let jpeg = image.resized(width: 1280).jpegData(compressionQuality: 0.75) {
+                args["p_image"] = jpeg.base64EncodedString()
+            }
+            _ = try await API(creds: store.creds).rpc("app_ai_ask", json: args)
             text = ""
+            image = nil
+            pick = nil
             error = nil
             await load()
         } catch {

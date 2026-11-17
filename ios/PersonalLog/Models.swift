@@ -86,6 +86,7 @@ struct RecipeItem: Codable, Hashable {
 
 struct Recipe: Codable, Hashable {
     var category: String?
+    var subcategory: String?  // the AI's second level under the category (none while the category is small)
     var prompt: String?       // the recipe's own "how many" question (e.g. How many waffles?)
     let items: [RecipeItem]
 }
@@ -104,6 +105,15 @@ struct RecipeBook: Codable {
         names = try c.decodeIfPresent([String].self, forKey: .names) ?? []
         categories = try c.decodeIfPresent([String].self, forKey: .categories) ?? []
         recipes = try c.decodeIfPresent([String: Recipe].self, forKey: .recipes) ?? [:]
+    }
+
+    /// A category's recipes by subcategory (alphabetical; recipes in none last, under nil).
+    func groups(_ names: [String]) -> [(String?, [String])] {
+        let subs = Set(names.compactMap { recipes[$0]?.subcategory }).sorted()
+        var out: [(String?, [String])] = subs.map { s in (s, names.filter { recipes[$0]?.subcategory == s }) }
+        let rest = names.filter { recipes[$0]?.subcategory == nil }
+        if !rest.isEmpty { out.append((nil, rest)) }
+        return out
     }
 
     /// (category, its recipe names), in the server's category order; recipes in no listed category under Other.
