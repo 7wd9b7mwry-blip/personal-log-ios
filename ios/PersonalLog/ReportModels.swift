@@ -278,7 +278,8 @@ struct RPair: Codable, Hashable, Identifiable {
     let b: Int
     let robust: Bool
     let sign: Int
-    let methods: [String]
+    let methods: [String]   // the methods agreeing with the direction
+    var disagree: [String]? = nil   // the ones pointing the other way
     let evidence: [REvidence]
     var id: String { "\(a)-\(b)" }
     func other(than id: Int) -> Int { a == id ? b : a }

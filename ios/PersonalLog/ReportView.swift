@@ -623,7 +623,9 @@ struct SuggestionView: View {
         return CardRow(route: .pair(lever: t.lever, target: x.target)) {
             Text(r.name(x.target)).font(.system(size: 14, weight: .semibold)).foregroundStyle(Theme.text)
             Muted(text: "\(Units.signed(x.expected ?? 0, unit, weightUnit: r.weightUnit)) expected · "
-                  + String(format: "%+.2f SD per SD · p = %.3f", x.effect_sd ?? 0, x.p ?? 1) + (x.trend.map { " · \($0)" } ?? ""))
+                  // the slope in the suggested direction, so its sign matches the expected change
+                  + String(format: "%+.2f SD per SD %@ · p = %.3f", (t.more ? 1 : -1) * (x.effect_sd ?? 0), t.more ? "more" : "less", x.p ?? 1)
+                  + (x.trend.map { " · \($0)" } ?? ""))
         }
     }
 }
@@ -715,6 +717,7 @@ struct PairRow: View {
             Spacer()
             Badge(robust: p.robust)
         }
-        Muted(text: p.methods.joined(separator: ", ") + (p.methods.count > 1 ? " agree" : "")).font(.system(size: 12))
+        Muted(text: p.methods.joined(separator: ", ") + (p.methods.count > 1 ? " agree" : "")
+              + ((p.disagree ?? []).isEmpty ? "" : " · \((p.disagree ?? []).joined(separator: ", ")) disagree")).font(.system(size: 12))
     }
 }

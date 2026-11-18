@@ -297,7 +297,7 @@ final class Store: ObservableObject {
         Task { _ = try? await api.rpc("app_recipe_used", json: ["p_name": name]) }   // for the usual-first order
         Task { await flushFood() }
         guard let text = recipeInput(name, servings: servings, at: at) else { return nil }
-        return (foodDay?.mirror_macrofactor ?? true) || recipeHasWater(name) ? shortcutURL(config.foodShortcut, input: text) : nil
+        return (foodDay?.mirror_macrofactor ?? false) || recipeHasWater(name) ? shortcutURL(config.foodShortcut, input: text) : nil
     }
 
     /// Water still goes to Apple Health through the Shortcut.
@@ -452,10 +452,13 @@ final class Store: ObservableObject {
     /// The Shortcut's input for a recipe (its habit amounts are queued here); nil without foods or water.
     func recipeInput(_ name: String, servings: Double, at: Date) -> String? {
         guard let recipe = recipes.recipes[name] else { return nil }
+        // off MacroFactor (food.mirror_macrofactor false): the Shortcut only takes the water to Apple Health
+        let mirror = foodDay?.mirror_macrofactor ?? false
         var items: [[String: Any]] = []
         for it in recipe.items {
             switch it.kind {
             case "food":
+                guard mirror else { continue }
                 let count = (it.count ?? 1) * servings
                 var line: [String: Any] = ["kind": "food", "name": it.name ?? "", "serving": it.serving ?? "", "count": count]
                 if let mf = it.macroFactorJSON(count: count) { line["mf"] = mf }   // the Shortcut logs it by JSON
@@ -527,7 +530,7 @@ final class Store: ObservableObject {
         foodLogs.append(FoodLog(name: config.officeFood, servings: 1, at: now, source: "office"))
         write("food_logs.json", foodLogs)
         Task { await flushFood() }
-        return (foodDay?.mirror_macrofactor ?? true) || recipeHasWater(config.officeFood) ? text : none
+        return (foodDay?.mirror_macrofactor ?? false) || recipeHasWater(config.officeFood) ? text : none
     }
 
     private func shortcutURL(_ shortcut: String, input: String) -> URL? {
