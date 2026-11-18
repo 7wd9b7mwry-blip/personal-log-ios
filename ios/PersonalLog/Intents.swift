@@ -159,6 +159,21 @@ struct SaveToLogIntent: AppIntent {
     }
 }
 
+/// Sit or stand up straight with the posture card on, then run this: its reading becomes "upright" (the add-on
+/// takes it within 10 s; leaning 15 degrees from it for 45 s sends "Sit up").
+struct CalibratePostureIntent: AppIntent {
+    static var title: LocalizedStringResource = "Calibrate Posture"
+    static var description = IntentDescription("Sit up straight with the posture card on, then run: its reading becomes upright.")
+
+    @MainActor
+    func perform() async throws -> some IntentResult & ReturnsValue<String> {
+        let creds = Store.shared.creds
+        guard creds.isComplete else { throw APIError.notConfigured }
+        _ = try await API(creds: creds).rpc("app_home_action", json: ["p_action": "posture_calibrate"])
+        return .result(value: "Calibrating: hold still for 10 seconds")
+    }
+}
+
 @MainActor
 enum AppSessionLog {
     static func log(_ app: String, _ kind: String) async {
@@ -179,6 +194,8 @@ struct LogShortcuts: AppShortcutsProvider {
                     shortTitle: "App Closed", systemImageName: "xmark.app")
         AppShortcut(intent: LogEventIntent(), phrases: ["Log an event in \(.applicationName)"],
                     shortTitle: "Log Event", systemImageName: "square.and.pencil")
+        AppShortcut(intent: CalibratePostureIntent(), phrases: ["Calibrate posture in \(.applicationName)"],
+                    shortTitle: "Calibrate Posture", systemImageName: "figure.stand")
         AppShortcut(intent: SaveToLogIntent(), phrases: ["Save to \(.applicationName)"],
                     shortTitle: "Save to Personal Log", systemImageName: "tray.and.arrow.down")
     }
