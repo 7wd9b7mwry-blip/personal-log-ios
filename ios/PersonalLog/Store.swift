@@ -366,6 +366,22 @@ final class Store: ObservableObject {
         await loadFoodDay()
     }
 
+    /// A log's servings (every food and its water scaled), or one food's amount; nil when saved, else the error.
+    func editFood(log: String? = nil, servings: Double? = nil, entry: Int? = nil, count: Double? = nil) async -> String? {
+        var args: [String: Any] = [:]
+        if let log { args["p_log_id"] = log }
+        if let servings { args["p_servings"] = servings }
+        if let entry { args["p_entry_id"] = entry }
+        if let count { args["p_count"] = count }
+        do {
+            _ = try await API(creds: creds).rpc("app_food_edit", json: args)
+            await loadFoodDay()
+            return nil
+        } catch {
+            return error.localizedDescription
+        }
+    }
+
     /// nil when saved, else the error.
     func setFoodTargets(_ t: [String: Any]) async -> String? {
         do {

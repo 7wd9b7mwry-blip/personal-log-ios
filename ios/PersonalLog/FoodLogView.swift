@@ -86,11 +86,12 @@ struct FoodTodayRow: View {
     }
 }
 
-/// Today's food log: the totals against the targets, each recipe logged (tap for its foods; swipe to delete), the
-/// ones still being sent, and the targets.
+/// Today's food log: the totals against the targets, each recipe logged (tap for its foods; swipe to edit the amount
+/// or delete), the ones still being sent, and the targets.
 struct FoodTodayView: View {
     @EnvironmentObject var store: Store
     @State private var editing = false
+    @State private var amount: FoodAmountEdit?
 
     var body: some View {
         List {
@@ -149,7 +150,14 @@ struct FoodTodayView: View {
                                     Text(it.energy.map { "\(Int($0)) kcal" } ?? "?").foregroundStyle(.secondary)
                                 }
                             }
-                            .swipeActions { Button("Delete", role: .destructive) { Task { await store.deleteFood(entry: it.id) } } }
+                            .swipeActions {
+                                Button("Delete", role: .destructive) { Task { await store.deleteFood(entry: it.id) } }
+                                if it.kind == "food", let c = it.count {
+                                    Button("Edit") {
+                                        amount = FoodAmountEdit(title: it.title ?? "", unit: it.serving ?? "", value: c, entry: it.id)
+                                    }.tint(.blue)
+                                }
+                            }
                         }
                     } label: {
                         HStack {
@@ -162,7 +170,12 @@ struct FoodTodayView: View {
                             Text("\(Int(l.energy ?? 0)) kcal").foregroundStyle(.secondary)
                         }
                     }
-                    .swipeActions { Button("Delete", role: .destructive) { Task { await store.deleteFood(log: l.log_id) } } }
+                    .swipeActions {
+                        Button("Delete", role: .destructive) { Task { await store.deleteFood(log: l.log_id) } }
+                        Button("Edit") {
+                            amount = FoodAmountEdit(title: l.recipe ?? "", unit: "servings", value: l.servings ?? 1, log: l.log_id)
+                        }.tint(.blue)
+                    }
                 }
             }
         }
@@ -170,8 +183,67 @@ struct FoodTodayView: View {
         .navigationBarTitleDisplayMode(.inline)
         .toolbar { Button("Targets") { editing = true } }
         .sheet(isPresented: $editing) { FoodTargetsView() }
+        .sheet(item: $amount) { a in FoodAmountView(edit: a, mirror: store.foodDay?.mirror_macrofactor ?? false) }
         .refreshable { await store.loadFoodDay() }
         .task { await store.loadFoodDay() }
+    }
+}
+
+/// What the amount sheet edits: a whole log's servings, or one food's count.
+struct FoodAmountEdit: Identifiable {
+    let title: String
+    let unit: String
+    let value: Double
+    var log: String? = nil
+    var entry: Int? = nil
+    var id: String { log ?? "entry \(entry ?? 0)" }
+}
+
+/// A logged amount, typed or by halves (4 pizzas -> 2: the foods and the water scale with it).
+struct FoodAmountView: View {
+    @EnvironmentObject var store: Store
+    @Environment(\.dismiss) private var dismiss
+    let edit: FoodAmountEdit
+    let mirror: Bool
+    @State private var value: Double = 1
+    @State private var error: String?
+
+    var body: some View {
+        NavigationStack {
+            Form {
+                Section {
+                    HStack {
+                        TextField("amount", value: $value, format: .number)
+                            .keyboardType(.decimalPad)
+                        Text(edit.unit).foregroundStyle(.secondary)
+                    }
+                    Stepper("By halves", value: $value, in: 0.5...1000, step: 0.5)
+                } header: { Text(edit.title) } footer: {
+                    if mirror {
+                        Text("Change it in MacroFactor too: its copy isn't edited from here.")
+                    }
+                }
+                if let error { Text(error).foregroundStyle(.red) }
+            }
+            .navigationTitle("Amount")
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItem(placement: .cancellationAction) { Button("Cancel") { dismiss() } }
+                ToolbarItem(placement: .confirmationAction) {
+                    Button("Save") {
+                        Task {
+                            let e = edit.log != nil
+                                ? await store.editFood(log: edit.log, servings: value)
+                                : await store.editFood(entry: edit.entry, count: value)
+                            if let e { error = e } else { dismiss() }
+                        }
+                    }
+                    .disabled(value == edit.value || value <= 0)
+                }
+            }
+            .onAppear { value = edit.value }
+        }
+        .presentationDetents([.medium])
     }
 }
 
