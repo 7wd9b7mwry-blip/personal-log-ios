@@ -43,6 +43,11 @@ struct IssuesView: View {
                 }
             }
             .navigationTitle("Issues")
+            .toolbar {
+                ToolbarItem(placement: .topBarTrailing) {
+                    NavigationLink { IdeasView() } label: { Label("Ideas", systemImage: "lightbulb") }
+                }
+            }
             .navigationBarTitleDisplayMode(.inline)
         }
     }

@@ -384,6 +384,22 @@ final class Store: ObservableObject {
         }
     }
 
+    /// The ideas and feature requests (public.app_features).
+    func fetchFeatures() async -> [Feature] {
+        guard creds.isComplete, let data = try? await API(creds: creds).rpc("app_features", json: [:]) else { return [] }
+        return (try? Self.isoDecoder.decode([Feature].self, from: data)) ?? []
+    }
+
+    /// Add, change or delete an idea (public.app_feature_save); nil when saved, else the error.
+    func saveFeature(_ p: [String: Any]) async -> String? {
+        do {
+            _ = try await API(creds: creds).rpc("app_feature_save", json: ["p": p])
+            return nil
+        } catch {
+            return error.localizedDescription
+        }
+    }
+
     /// Delete a logged event, or change its time / value; nil when saved, else the error.
     func editEvent(_ id: Int, delete: Bool = false, at: Date? = nil, value: Double? = nil) async -> String? {
         var args: [String: Any] = ["p_id": id, "p_delete": delete]
