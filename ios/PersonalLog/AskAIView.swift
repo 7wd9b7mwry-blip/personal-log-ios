@@ -40,6 +40,7 @@ struct AskAIView: View {
     @State private var image: UIImage?
     @State private var pick: PhotosPickerItem?
     @State private var camera = false
+    @State private var scanning = false
     @FocusState private var focused: Bool
 
     private var placeholder: String {
@@ -61,6 +62,11 @@ struct AskAIView: View {
                             Spacer()
                             PhotosPicker(selection: $pick, matching: .images) { Label("Photo", systemImage: "photo") }
                                 .buttonStyle(.borderless)
+                            if BarcodeScanner.available {
+                                Spacer()
+                                Button { scanning = true } label: { Label("Barcode", systemImage: "barcode.viewfinder") }
+                                    .buttonStyle(.borderless)
+                            }
                         }
                         if let image {
                             HStack {
@@ -121,6 +127,13 @@ struct AskAIView: View {
                 CameraPicker(front: false, flash: false) { img in
                     if let img { image = img }
                     camera = false
+                }
+                .ignoresSafeArea()
+            }
+            .sheet(isPresented: $scanning) {
+                BarcodeScanner { code in
+                    if let code { text = (text.isEmpty ? "" : text + " ") + "barcode \(code)" }
+                    scanning = false
                 }
                 .ignoresSafeArea()
             }
