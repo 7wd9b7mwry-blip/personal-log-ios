@@ -35,8 +35,17 @@ struct FoodDay: Codable {
         let items: [Item]
         var id: String { log_id }
     }
+    /// Our energy expenditure estimate (food.tdee): the typical day's burn, today's with the activity so far, and the
+    /// target it suggests for the goal.
+    struct TDEE: Codable, Hashable {
+        let baseline: Double
+        let expenditure: Double
+        let suggested: Double
+        let weight_trend_lb: Double?
+    }
     let day: String
     let totals: [String: Double]
+    var tdee: TDEE?
     let target: [String: Double?]
     let left: [String: Double]
     let mirror_macrofactor: Bool
@@ -101,6 +110,11 @@ struct FoodTodayView: View {
                         LabeledContent("Water (from recipes)") { Text("\(Fmt.amount((w / 29.5735).rounded())) fl oz") }
                     }
                 } footer: {
+                    if let t = d.tdee {
+                        Text("Our estimate: you burn about \(Int(t.baseline)) kcal on a typical day (\(Int(t.expenditure)) with today's activity so far)"
+                             + (t.weight_trend_lb.map { ", weight trend \(Fmt.amount($0)) lb" } ?? "")
+                             + ". For your goal that suggests about \(Int(t.suggested)) kcal a day.")
+                    }
                     if d.mirror_macrofactor {
                         Text("Also logged in MacroFactor while we compare the two. Deleting here doesn't delete it there.")
                     }
