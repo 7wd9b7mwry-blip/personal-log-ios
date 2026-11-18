@@ -261,8 +261,10 @@ struct MorningPhotosView: View {
         dismiss()
     }
 
+    /// All three in: today's alarms go and the bed's stops now (the Morning photos on_done would also stop it).
     private func finish() async {
         MorningAlarms.cancelToday()
+        await MorningAlarms.stopBed()
         if let c = chores.chores.first(where: { $0.alarm }), let id = c.id { await chores.act(id, "done") }
         await chores.refreshMorning()
     }
