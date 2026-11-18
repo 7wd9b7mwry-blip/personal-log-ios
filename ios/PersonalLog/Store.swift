@@ -337,9 +337,8 @@ final class Store: ObservableObject {
         await loadFoodDay()
     }
 
-    func loadFoodDay() async {
-        guard creds.isComplete,
-              let data = try? await API(creds: creds).rpc("app_food_day", json: [:]) else { return }
+    /// The server's ISO times, with or without fractions of a second.
+    static let isoDecoder: JSONDecoder = {
         let dec = JSONDecoder()
         dec.dateDecodingStrategy = .custom { d in
             let s = try d.singleValueContainer().decode(String.self)
@@ -350,11 +349,52 @@ final class Store: ObservableObject {
             if let t = f.date(from: s) { return t }
             throw DecodingError.dataCorrupted(.init(codingPath: d.codingPath, debugDescription: "date \(s)"))
         }
+        return dec
+    }()
+
+    func loadFoodDay() async {
+        guard let d = await fetchFoodDay(nil) else { return }
+        foodDay = d
+        write("food_day.json", foodDay)
+    }
+
+    /// One day's food log (public.app_food_day; nil = today, by the day boundary).
+    func fetchFoodDay(_ day: String?) async -> FoodDay? {
+        guard creds.isComplete,
+              let data = try? await API(creds: creds).rpc("app_food_day", json: day.map { ["p_day": $0] } ?? [:])
+        else { return nil }
         do {
-            foodDay = try dec.decode(FoodDay.self, from: data)
-            write("food_day.json", foodDay)
+            return try Self.isoDecoder.decode(FoodDay.self, from: data)
         } catch {
-            message = "Today's food: \(error.localizedDescription)"
+            message = "Food: \(error.localizedDescription)"
+            return nil
+        }
+    }
+
+    /// One day's logged events (public.app_events; nil = today, by the day boundary).
+    func fetchEvents(_ day: String?) async -> EventDay? {
+        guard creds.isComplete,
+              let data = try? await API(creds: creds).rpc("app_events", json: day.map { ["p_day": $0] } ?? [:])
+        else { return nil }
+        do {
+            return try Self.isoDecoder.decode(EventDay.self, from: data)
+        } catch {
+            message = "History: \(error.localizedDescription)"
+            return nil
+        }
+    }
+
+    /// Delete a logged event, or change its time / value; nil when saved, else the error.
+    func editEvent(_ id: Int, delete: Bool = false, at: Date? = nil, value: Double? = nil) async -> String? {
+        var args: [String: Any] = ["p_id": id, "p_delete": delete]
+        if let at { args["p_at"] = Fmt.iso(at) }
+        if let value { args["p_value"] = value }
+        do {
+            _ = try await API(creds: creds).rpc("app_event_edit", json: args)
+            await refresh()
+            return nil
+        } catch {
+            return error.localizedDescription
         }
     }
 

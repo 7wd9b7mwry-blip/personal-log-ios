@@ -157,6 +157,26 @@ struct OutEvent: Codable, Hashable, Identifiable {
     }
 }
 
+/// A day's logged events (public.app_events).
+struct EventDay: Codable {
+    let day: String
+    let events: [LoggedEvent]
+}
+
+struct LoggedEvent: Codable, Hashable, Identifiable {
+    let id: Int
+    let name: String
+    let kind: String          // log | start | end | val
+    let at: Date
+    let value: Double?
+    let unit: String?
+    let editable: Bool
+    let from: String          // app | sensor | other
+    let guava: Bool
+
+    var title: String { name + (kind == "start" ? " started" : kind == "end" ? " stopped" : "") }
+}
+
 enum Fmt {
     /// A count without trailing zeros: 2, 0.6, 1.25.
     static func num(_ x: Double) -> String {

@@ -86,16 +86,77 @@ struct FoodTodayRow: View {
     }
 }
 
-/// Today's food log: the totals against the targets, each recipe logged (tap for its foods; swipe to edit the amount
-/// or delete), the ones still being sent, and the targets.
+/// A day of the logs by the day boundary (it starts at 5 AM, like the server's public.event_day: a 2 AM meal counts
+/// for the day before).
+enum LogDay {
+    static let startHour = 5
+
+    static func today() -> Date {
+        Calendar.current.startOfDay(for: Date().addingTimeInterval(-Double(startHour) * 3600))
+    }
+
+    static func key(_ d: Date) -> String {
+        let f = DateFormatter()
+        f.calendar = Calendar(identifier: .gregorian)
+        f.locale = Locale(identifier: "en_US_POSIX")
+        f.dateFormat = "yyyy-MM-dd"
+        return f.string(from: d)
+    }
+
+    static func title(_ d: Date) -> String {
+        let t = today()
+        if d == t { return "Today" }
+        if let y = Calendar.current.date(byAdding: .day, value: -1, to: t), d == y { return "Yesterday" }
+        return d.formatted(.dateTime.weekday(.abbreviated).month(.abbreviated).day())
+    }
+}
+
+/// ‹ day › with a date picker: any past day, not the future.
+struct DayPicker: View {
+    @Binding var day: Date
+
+    var body: some View {
+        HStack(spacing: 4) {
+            Button { step(-1) } label: { Image(systemName: "chevron.left") }
+            DatePicker("Day", selection: $day, in: ...LogDay.today(), displayedComponents: .date)
+                .labelsHidden()
+                .onChange(of: day) { _, d in
+                    let start = Calendar.current.startOfDay(for: d)
+                    if start != d { day = start }
+                }
+            Button { step(1) } label: { Image(systemName: "chevron.right") }
+                .disabled(day >= LogDay.today())
+        }
+    }
+
+    private func step(_ n: Int) {
+        if let d = Calendar.current.date(byAdding: .day, value: n, to: day), d <= LogDay.today() { day = d }
+    }
+}
+
+/// A day's food log (today unless another day is picked): the totals against the targets, each recipe logged (tap
+/// for its foods; swipe to edit the amount or delete), the ones still being sent, and the targets.
 struct FoodTodayView: View {
     @EnvironmentObject var store: Store
     @State private var editing = false
     @State private var amount: FoodAmountEdit?
+    @State private var day = LogDay.today()
+    @State private var other: FoodDay?   // a past day's log
+
+    private var isToday: Bool { day == LogDay.today() }
+    private var shown: FoodDay? { isToday ? store.foodDay : other }
+
+    private func reload() async {
+        if isToday {
+            await store.loadFoodDay()
+        } else {
+            other = await store.fetchFoodDay(LogDay.key(day))
+        }
+    }
 
     var body: some View {
         List {
-            if let d = store.foodDay {
+            if let d = shown {
                 Section {
                     ForEach(foodMacros, id: \.key) { m in
                         let v = d.totals[m.key] ?? 0
@@ -121,7 +182,7 @@ struct FoodTodayView: View {
                     }
                 }
             }
-            if !store.foodLogs.isEmpty {
+            if isToday && !store.foodLogs.isEmpty {
                 Section("Sending") {
                     ForEach(store.foodLogs) { l in
                         HStack {
@@ -133,7 +194,7 @@ struct FoodTodayView: View {
                 }
             }
             Section("Logged") {
-                ForEach(store.foodDay?.logs ?? []) { l in
+                ForEach(shown?.logs ?? []) { l in
                     DisclosureGroup {
                         ForEach(l.items) { it in
                             HStack {
@@ -151,7 +212,9 @@ struct FoodTodayView: View {
                                 }
                             }
                             .swipeActions {
-                                Button("Delete", role: .destructive) { Task { await store.deleteFood(entry: it.id) } }
+                                Button("Delete", role: .destructive) {
+                                    Task { await store.deleteFood(entry: it.id); await reload() }
+                                }
                                 if it.kind == "food", let c = it.count {
                                     Button("Edit") {
                                         amount = FoodAmountEdit(title: it.title ?? "", unit: it.serving ?? "", value: c, entry: it.id)
@@ -171,7 +234,9 @@ struct FoodTodayView: View {
                         }
                     }
                     .swipeActions {
-                        Button("Delete", role: .destructive) { Task { await store.deleteFood(log: l.log_id) } }
+                        Button("Delete", role: .destructive) {
+                            Task { await store.deleteFood(log: l.log_id); await reload() }
+                        }
                         Button("Edit") {
                             amount = FoodAmountEdit(title: l.recipe ?? "", unit: "servings", value: l.servings ?? 1, log: l.log_id)
                         }.tint(.blue)
@@ -179,13 +244,23 @@ struct FoodTodayView: View {
                 }
             }
         }
-        .navigationTitle("Today")
+        .overlay {
+            if !isToday && (shown?.logs.isEmpty ?? true) {
+                ContentUnavailableView("Nothing logged", systemImage: "fork.knife")
+            }
+        }
+        .navigationTitle(LogDay.title(day))
         .navigationBarTitleDisplayMode(.inline)
-        .toolbar { Button("Targets") { editing = true } }
+        .toolbar {
+            ToolbarItem(placement: .bottomBar) { DayPicker(day: $day) }
+            ToolbarItem(placement: .topBarTrailing) { Button("Targets") { editing = true } }
+        }
         .sheet(isPresented: $editing) { FoodTargetsView() }
-        .sheet(item: $amount) { a in FoodAmountView(edit: a, mirror: store.foodDay?.mirror_macrofactor ?? false) }
-        .refreshable { await store.loadFoodDay() }
-        .task { await store.loadFoodDay() }
+        .sheet(item: $amount, onDismiss: { Task { await reload() } }) { a in
+            FoodAmountView(edit: a, mirror: shown?.mirror_macrofactor ?? false)
+        }
+        .refreshable { await reload() }
+        .task(id: day) { await reload() }
     }
 }
 
