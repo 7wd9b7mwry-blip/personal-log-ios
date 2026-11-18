@@ -11,6 +11,9 @@ final class Store: ObservableObject {
     @Published var config = AppConfig()
     @Published var recipes = RecipeBook()
     @Published var queue: [OutEvent] = []
+    @Published var foodLogs: [FoodLog] = []         // recipes logged, not yet in the food log (food_logs.json)
+    @Published var foodDay: FoodDay?                // today's food log (app_food_day)
+    private var foodFlushing = false
     @Published var recent: [OutEvent] = []          // the last taps, newest first (sent or not)
     @Published var running: [String: Date] = [:]
     @Published var last: [String: Date] = [:]
@@ -39,6 +42,8 @@ final class Store: ObservableObject {
         config = read("config.json") ?? AppConfig()
         recipes = read("recipes.json") ?? RecipeBook()
         queue = read("queue.json") ?? []
+        foodLogs = read("food_logs.json") ?? []
+        foodDay = read("food_day.json")
         recent = read("recent.json") ?? []
         running = config.running
         last = config.last
@@ -51,7 +56,7 @@ final class Store: ObservableObject {
         }
         monitor.pathUpdateHandler = { [weak self] path in
             guard path.status == .satisfied else { return }
-            Task { @MainActor [weak self] in await self?.flush() }
+            Task { @MainActor [weak self] in await self?.flush(); await self?.flushFood() }
         }
         monitor.start(queue: DispatchQueue(label: "net"))
     }
@@ -282,10 +287,94 @@ final class Store: ObservableObject {
     /// Logs a recipe: habit amounts go straight to the database; the foods and water go to the Shortcut (only a Shortcut
     /// can call MacroFactor's Log Foods), which comes back to the app when done.
     func logRecipe(_ name: String, servings: Double) -> URL? {
-        guard recipes.recipes[name] != nil, let text = recipeInput(name, servings: servings, at: takeTime()) else { return nil }
+        guard recipes.recipes[name] != nil else { return nil }
+        let at = takeTime()
+        // our food log first (queued, sent when online); MacroFactor gets a copy while the two are compared
+        foodLogs.append(FoodLog(name: name, servings: servings, at: at))
+        write("food_logs.json", foodLogs)
+        UINotificationFeedbackGenerator().notificationOccurred(.success)
         let api = API(creds: creds)
         Task { _ = try? await api.rpc("app_recipe_used", json: ["p_name": name]) }   // for the usual-first order
-        return shortcutURL(config.foodShortcut, input: text)
+        Task { await flushFood() }
+        guard let text = recipeInput(name, servings: servings, at: at) else { return nil }
+        return (foodDay?.mirror_macrofactor ?? true) || recipeHasWater(name) ? shortcutURL(config.foodShortcut, input: text) : nil
+    }
+
+    /// Water still goes to Apple Health through the Shortcut.
+    private func recipeHasWater(_ name: String) -> Bool {
+        recipes.recipes[name]?.items.contains { $0.kind == "water" } ?? false
+    }
+
+    /// Calories of the logs not sent yet (so Today counts them already).
+    var pendingFoodEnergy: Double {
+        foodLogs.reduce(0) { sum, l in
+            sum + (recipes.recipes[l.name]?.items ?? []).reduce(0) { s, it in
+                guard it.kind == "food", let g = it.grams, let kcal = it.per_g?["energy"] else { return s }
+                return s + kcal * g * (it.count ?? 1) * l.servings
+            }
+        }
+    }
+
+    /// Sends the queued food logs, oldest first; a log the server refuses (a recipe gone) is dropped with a message.
+    func flushFood() async {
+        guard !foodFlushing, !foodLogs.isEmpty, creds.isComplete else { return }
+        foodFlushing = true
+        defer { foodFlushing = false }
+        let api = API(creds: creds)
+        for l in foodLogs {
+            do {
+                _ = try await api.rpc("app_food_log", json: ["p_name": l.name, "p_servings": l.servings,
+                                                             "p_at": Fmt.iso(l.at), "p_log_id": l.id, "p_source": l.source])
+                foodLogs.removeAll { $0.id == l.id }
+            } catch APIError.http(let code, let body) where (400..<500).contains(code) && code != 401 && code != 408 {
+                foodLogs.removeAll { $0.id == l.id }
+                message = "Food log refused \(l.name): \(body.prefix(120))"
+            } catch {
+                break   // offline or the server is busy: the rest wait too
+            }
+        }
+        write("food_logs.json", foodLogs)
+        await loadFoodDay()
+    }
+
+    func loadFoodDay() async {
+        guard creds.isComplete,
+              let data = try? await API(creds: creds).rpc("app_food_day", json: [:]) else { return }
+        let dec = JSONDecoder()
+        dec.dateDecodingStrategy = .custom { d in
+            let s = try d.singleValueContainer().decode(String.self)
+            let f = ISO8601DateFormatter()
+            f.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
+            if let t = f.date(from: s) { return t }
+            f.formatOptions = [.withInternetDateTime]
+            if let t = f.date(from: s) { return t }
+            throw DecodingError.dataCorrupted(.init(codingPath: d.codingPath, debugDescription: "date \(s)"))
+        }
+        do {
+            foodDay = try dec.decode(FoodDay.self, from: data)
+            write("food_day.json", foodDay)
+        } catch {
+            message = "Today's food: \(error.localizedDescription)"
+        }
+    }
+
+    func deleteFood(log: String? = nil, entry: Int? = nil) async {
+        var args: [String: Any] = [:]
+        if let log { args["p_log_id"] = log }
+        if let entry { args["p_entry_id"] = entry }
+        _ = try? await API(creds: creds).rpc("app_food_delete", json: args)
+        await loadFoodDay()
+    }
+
+    /// nil when saved, else the error.
+    func setFoodTargets(_ t: [String: Any]) async -> String? {
+        do {
+            _ = try await API(creds: creds).rpc("app_food_target", json: ["p_target": t])
+            await loadFoodDay()
+            return nil
+        } catch {
+            return error.localizedDescription
+        }
     }
 
     /// The Shortcut's input for a recipe (its habit amounts are queued here); nil without foods or water.
@@ -363,7 +452,10 @@ final class Store: ObservableObject {
         guard UserDefaults.standard.string(forKey: "officeFoodDay") != day,
               let text = recipeInput(config.officeFood, servings: 1, at: now) else { return none }
         UserDefaults.standard.set(day, forKey: "officeFoodDay")
-        return text
+        foodLogs.append(FoodLog(name: config.officeFood, servings: 1, at: now, source: "office"))
+        write("food_logs.json", foodLogs)
+        Task { await flushFood() }
+        return (foodDay?.mirror_macrofactor ?? true) || recipeHasWater(config.officeFood) ? text : none
     }
 
     private func shortcutURL(_ shortcut: String, input: String) -> URL? {

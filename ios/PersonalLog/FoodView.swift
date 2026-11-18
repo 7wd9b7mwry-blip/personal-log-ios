@@ -19,6 +19,7 @@ struct FoodView: View {
                 StatusLine()
                 List {
                     if search.isEmpty {
+                        Section { NavigationLink { FoodTodayView() } label: { FoodTodayRow() } }
                         // categories first; tap one for its recipes
                         ForEach(store.recipes.sections(matching: ""), id: \.0) { category, names in
                             NavigationLink(value: category) {
@@ -35,7 +36,8 @@ struct FoodView: View {
                         }
                     }
                 }
-                .refreshable { await store.refresh() }
+                .refreshable { await store.refresh(); await store.flushFood(); await store.loadFoodDay() }
+                .task { await store.loadFoodDay() }
                 .overlay {
                     if store.recipes.names.isEmpty {
                         ContentUnavailableView("No recipes", systemImage: "fork.knife",
