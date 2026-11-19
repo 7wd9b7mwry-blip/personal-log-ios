@@ -410,7 +410,8 @@ enum Units {
         case "ms": return String(format: "%.0f ms", v)
         case "ratio": return String(format: "%.3f", v)
         case "boolean": return v >= 0.5 ? "yes" : "no"
-        case "": return String(format: "%.1f", v)
+        case "breaths_per_min", "breaths/min": return String(format: "%.1f breaths/min", v)
+        case "", "level": return String(format: "%.1f", v)   // a setting / sensor level reads as a number
         default: return String(format: "%.1f %@", v, label(u))
         }
     }
