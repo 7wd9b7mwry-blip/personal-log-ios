@@ -103,7 +103,7 @@ struct CatalogMetric: Identifiable, Hashable {
 
 /// Which page the AI looks at (app-insight).
 enum InsightPage: Hashable {
-    case home, metric(Int), pair(Int, Int), suggestion(lever: Int, more: Bool, horizon: String)
+    case home, metric(Int), pair(Int, Int), suggestion(lever: Int, more: Bool, horizon: String), focus(Int)
 
     var body: [String: Any] {
         switch self {
@@ -111,6 +111,7 @@ enum InsightPage: Hashable {
         case let .metric(id): return ["page": "metric", "id": id]
         case let .pair(lever, target): return ["page": "pair", "lever": lever, "target": target]
         case let .suggestion(lever, more, horizon): return ["page": "try", "lever": lever, "more": more, "horizon": horizon]
+        case let .focus(id): return ["page": "focus", "id": id]
         }
     }
 }
@@ -370,6 +371,7 @@ enum Route: Hashable {
     case suggestion(RTry)
     case browse
     case entity(CatalogGroup)
+    case focus(FocusReport)
 
     init?(url: URL) {
         guard url.scheme == "pdb" else { return nil }

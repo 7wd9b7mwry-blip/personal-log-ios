@@ -56,7 +56,7 @@ struct LogView: View {
             }
             .toolbar {
                 ToolbarItem(placement: .topBarTrailing) {
-                    NavigationLink { RecentView() } label: { Image(systemName: "clock.arrow.circlepath") }
+                    NavigationLink { RecentView() } label: { Label("History", systemImage: "clock.arrow.circlepath").labelStyle(.titleAndIcon) }
                 }
             }
         }

@@ -17,6 +17,7 @@ final class Store: ObservableObject {
     @Published var recent: [OutEvent] = []          // the last taps, newest first (sent or not)
     @Published var running: [String: Date] = [:]
     @Published var last: [String: Date] = [:]
+    @Published var focusReports: [FocusReport] = []      // the Report tab's focused reports
     @Published var backdate: Date?                  // nil = now; set to log something that happened earlier
     @Published var message: String?
     @Published var refreshedAt: Date?
@@ -372,15 +373,64 @@ final class Store: ObservableObject {
     }
 
     /// One day's logged events (public.app_events; nil = today, by the day boundary).
-    func fetchEvents(_ day: String?) async -> EventDay? {
+    func fetchEvents(_ day: String?, all: Bool = false) async -> EventDay? {
+        var args: [String: Any] = ["p_all": all]
+        if let day { args["p_day"] = day }
         guard creds.isComplete,
-              let data = try? await API(creds: creds).rpc("app_events", json: day.map { ["p_day": $0] } ?? [:])
+              let data = try? await API(creds: creds).rpc("app_events", json: args)
         else { return nil }
         do {
             return try Self.isoDecoder.decode(EventDay.self, from: data)
         } catch {
             message = "History: \(error.localizedDescription)"
             return nil
+        }
+    }
+
+    /// Logs anything at a past time (public.app_event_add): kind log (once), val (an amount) or session (start and end).
+    func addEvent(name: String, kind: String, at: Date, end: Date? = nil, value: Double? = nil, unit: String? = nil,
+                  notes: String? = nil) async -> String? {
+        var args: [String: Any] = ["p_name": name, "p_kind": kind, "p_at": Fmt.iso(at)]
+        if let end { args["p_end_at"] = Fmt.iso(end) }
+        if let value { args["p_value"] = value }
+        if let unit, !unit.isEmpty { args["p_unit"] = unit }
+        if let notes, !notes.isEmpty { args["p_notes"] = notes }
+        do {
+            _ = try await API(creds: creds).rpc("app_event_add", json: args)
+            await refresh()
+            return nil
+        } catch {
+            return error.localizedDescription
+        }
+    }
+
+    /// The focused reports (public.app_focus_list).
+    func loadFocusReports() async {
+        guard creds.isComplete, let data = try? await API(creds: creds).rpc("app_focus_list"),
+              let list = try? JSONDecoder().decode([FocusReport].self, from: data) else { return }
+        focusReports = list
+    }
+
+    /// Adds (id nil) or changes a focused report; nil, or the error.
+    func saveFocus(id: Int?, title: String, question: String) async -> String? {
+        var args: [String: Any] = ["p_title": title, "p_question": question]
+        if let id { args["p_id"] = id }
+        do {
+            _ = try await API(creds: creds).rpc("app_focus_save", json: args)
+            await loadFocusReports()
+            return nil
+        } catch {
+            return error.localizedDescription
+        }
+    }
+
+    func deleteFocus(_ id: Int) async -> String? {
+        do {
+            _ = try await API(creds: creds).rpc("app_focus_save", json: ["p_id": id, "p_delete": true])
+            await loadFocusReports()
+            return nil
+        } catch {
+            return error.localizedDescription
         }
     }
 
@@ -401,10 +451,13 @@ final class Store: ObservableObject {
     }
 
     /// Delete a logged event, or change its time / value; nil when saved, else the error.
-    func editEvent(_ id: Int, delete: Bool = false, at: Date? = nil, value: Double? = nil) async -> String? {
+    func editEvent(_ id: Int, delete: Bool = false, at: Date? = nil, value: Double? = nil,
+                   name: String? = nil, notes: String? = nil) async -> String? {
         var args: [String: Any] = ["p_id": id, "p_delete": delete]
         if let at { args["p_at"] = Fmt.iso(at) }
         if let value { args["p_value"] = value }
+        if let name { args["p_name"] = name }
+        if let notes { args["p_notes"] = notes }
         do {
             _ = try await API(creds: creds).rpc("app_event_edit", json: args)
             await refresh()

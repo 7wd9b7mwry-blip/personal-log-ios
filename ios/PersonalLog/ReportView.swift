@@ -36,11 +36,15 @@ struct ReportView: View {
                         case let .suggestion(t): SuggestionView(r: r, t: t)
                         case .browse: BrowseView(r: r)
                         case let .entity(g): EntityView(r: r, g: g)
+                        case let .focus(f): FocusReportView(r: r, focus: f)
                         }
                     }
                 }
             }
             .toolbar {
+                if let r = store.report {
+                    ToolbarItem(placement: .topBarLeading) { PDFButton(r: r) }
+                }
                 ToolbarItem(placement: .topBarTrailing) {
                     Button { Task { loading = true; await store.refreshReport(); loading = false } } label: {
                         if loading { ProgressView() } else { Image(systemName: "arrow.clockwise") }
@@ -86,6 +90,7 @@ struct ReportHome: View {
         ScrollView {
             LazyVStack(spacing: 14) {
                 InsightCard(page: .home, auto: true, title: "Worth a look")
+                FocusListCard()
                 Card(title: "Your key metrics", intro: "Tap one for its chart, what drives it and everything related.") {
                     ForEach(r.keyMetrics) { k in CardRow(route: .metric(k.id)) { KeyRow(r: r, k: k) } }
                 }

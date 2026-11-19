@@ -173,6 +173,8 @@ struct LoggedEvent: Codable, Hashable, Identifiable {
     let editable: Bool
     let from: String          // app | sensor | other
     let guava: Bool
+    var notes: String?
+    var source: String?       // manual | app | watch | chore | sensor | place | music | device | auto | other
 
     var title: String { name + (kind == "start" ? " started" : kind == "end" ? " stopped" : "") }
 }
