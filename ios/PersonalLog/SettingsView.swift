@@ -19,6 +19,10 @@ struct RecentView: View {
 
     var body: some View {
         List {
+            // the day at the top: a bottom toolbar sits under iOS 26's floating tab bar, out of sight
+            Section { DayPicker(day: $day).frame(maxWidth: .infinity) } footer: {
+                Text("Pick any past day to edit or delete what was logged.")
+            }
             let unsent = store.recent.filter { !$0.sent }
             if isToday && !unsent.isEmpty {
                 Section("Sending") {
@@ -70,7 +74,6 @@ struct RecentView: View {
         }
         .navigationTitle("History · " + LogDay.title(day))
         .navigationBarTitleDisplayMode(.inline)
-        .toolbar { ToolbarItem(placement: .bottomBar) { DayPicker(day: $day) } }
         .sheet(item: $editing, onDismiss: { Task { await reload() } }) { e in EventEditView(event: e) }
         .refreshable { await reload() }
         .task(id: day) { await reload() }
