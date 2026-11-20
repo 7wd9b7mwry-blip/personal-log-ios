@@ -285,9 +285,12 @@ struct MorningPhotosView: View {
         dismiss()
     }
 
-    /// All three in: today's alarms go and the bed's stops now (the Morning photos on_done would also stop it).
+    /// All three in: today's alarms go and the bed's stops now (the Morning photos on_done would also stop it). Then,
+    /// when set, the sync Shortcut runs while the phone is still unlocked (the weigh-in is next and the phone goes
+    /// down): it opens the apps that only sync when opened (Oura, HidrateSpark) and comes back here.
     private func finish() async {
         MorningAlarms.cancelToday()
+        MorningSync.run()
         await MorningAlarms.stopBed()
         if let c = chores.chores.first(where: { $0.alarm }), let id = c.id { await chores.act(id, "done") }
         await chores.refreshMorning()
@@ -344,6 +347,8 @@ extension UIImage {
 
 /// Wake times and the alarm chain.
 struct MorningSettingsView: View {
+    @AppStorage(MorningSync.onKey) private var syncOn = false
+    @AppStorage(MorningSync.nameKey) private var syncName = MorningSync.defaultName
     @ObservedObject private var chores = Chores.shared
     @Environment(\.dismiss) private var dismiss
     @State private var m = MorningSettings()
@@ -373,6 +378,15 @@ struct MorningSettingsView: View {
                 } footer: {
                     Text("The bed, blinds and lights start at the wake-up; the alarm follows. On a morning the smart wake may still wait out deep or REM sleep, it counts from the latest the bed may ring. Stopping an alarm only waits for the next one. Taking the morning photos ends today's.")
                 }
+                Section {
+                    Toggle("Sync apps after the photos", isOn: $syncOn)
+                    if syncOn {
+                        TextField("Shortcut name", text: $syncName).autocorrectionDisabled()
+                        Button("Run it now") { MorningSync.run(force: true) }
+                    }
+                } footer: {
+                    Text("Runs this Shortcut right after the last photo, while the phone is still unlocked, so the apps that only sync when opened (Oura, HidrateSpark) sync during the weigh-in. Make it in Shortcuts: Open App Oura, Wait 20 s, Open App HidrateSpark, Wait 20 s, Open App Log.")
+                }
             }
             .navigationTitle("Morning")
             .navigationBarTitleDisplayMode(.inline)
@@ -388,5 +402,22 @@ struct MorningSettingsView: View {
 
     private func time(_ s: Binding<String>) -> Binding<Date> {
         Binding(get: { ChoreTime.clock(s.wrappedValue) }, set: { s.wrappedValue = ChoreTime.hhmm($0) })
+    }
+}
+
+/// The apps that only sync when opened, opened by a Shortcut after the morning photos (the phone is unlocked then; the
+/// weigh-in comes next). An app can't open others in a row itself, so a Shortcut does it: Open App Oura, Wait,
+/// Open App HidrateSpark, Wait, Open App Log. Off until it's made (Morning settings).
+enum MorningSync {
+    static let onKey = "morningSyncOn", nameKey = "morningSyncShortcut", defaultName = "Sync Apps"
+
+    @MainActor
+    static func run(force: Bool = false) {
+        let d = UserDefaults.standard
+        guard force || d.bool(forKey: onKey) else { return }
+        let name = (d.string(forKey: nameKey) ?? defaultName).trimmingCharacters(in: .whitespaces)
+        guard !name.isEmpty, let q = name.addingPercentEncoding(withAllowedCharacters: .urlQueryAllowed),
+              let url = URL(string: "shortcuts://run-shortcut?name=" + q) else { return }
+        UIApplication.shared.open(url)
     }
 }
