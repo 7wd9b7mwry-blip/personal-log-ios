@@ -10,11 +10,12 @@ struct MorningSettings: Equatable {
     var weekday = "07:30"
     var weekend = "09:00"
     var alarmOn = true
-    var afterMinutes = 5        // the first alarm this long after the wake-up (the bed, blinds and lights go first)
+    var afterMinutes = 2        // the first alarm this long after the wake-up (the bed, blinds and lights go first)
     var everyMinutes = 5
     var count = 6
     var photosDoneToday = false
     var wakes: [Date] = []          // the next seven mornings' wake times, from Home Assistant's wake-up schedule
+    var alarmFrom: [Date] = []      // where each morning's alarms count from: the wake-up, or the latest the smart wake may ring
     var fromHomeAssistant = false
 
     init() {}
@@ -24,11 +25,13 @@ struct MorningSettings: Equatable {
         weekend = j["weekend"] as? String ?? "09:00"
         let a = j["alarm"] as? [String: Any] ?? [:]
         alarmOn = a["on"] as? Bool ?? true
-        afterMinutes = (a["after_minutes"] as? NSNumber)?.intValue ?? 5
+        afterMinutes = (a["after_minutes"] as? NSNumber)?.intValue ?? 2
         everyMinutes = (a["every_minutes"] as? NSNumber)?.intValue ?? 5
         count = (a["count"] as? NSNumber)?.intValue ?? 6
         photosDoneToday = j["photos_done_today"] as? Bool ?? false
-        wakes = ((j["wakes"] as? [[String: Any]]) ?? []).compactMap { ($0["at"] as? String).flatMap(ChoreTime.instant) }
+        let ws = (j["wakes"] as? [[String: Any]]) ?? []
+        wakes = ws.compactMap { ($0["at"] as? String).flatMap(ChoreTime.instant) }
+        alarmFrom = ws.compactMap { (($0["alarm_from"] ?? $0["at"]) as? String).flatMap(ChoreTime.instant) }
         fromHomeAssistant = j["source"] as? String == "home_assistant"
     }
 
@@ -68,8 +71,9 @@ enum MorningAlarms {
             for offset in 0..<7 {
                 guard let day = Calendar.current.date(byAdding: .day, value: offset, to: Date()) else { continue }
                 if offset == 0 && m.photosDoneToday { continue }
-                // Home Assistant's wake-up schedule when the server sent it, else the app's own times
-                let fromServer = m.wakes.first { Calendar.current.isDate($0, inSameDayAs: day) }
+                // Home Assistant's wake-up schedule when the server sent it (from the latest the smart wake may still
+                // ring that morning), else the app's own times
+                let fromServer = m.alarmFrom.first { Calendar.current.isDate($0, inSameDayAs: day) }
                 guard let wake = fromServer ?? m.wake(on: day, holidays: holidays) else { continue }
                 for i in 0..<max(1, m.count) {
                     let at = wake.addingTimeInterval(Double(max(0, m.afterMinutes) * 60 + i * max(1, m.everyMinutes) * 60))
@@ -347,7 +351,7 @@ struct MorningSettingsView: View {
                         Stepper("\(m.count) alarms", value: $m.count, in: 1...12)
                     }
                 } footer: {
-                    Text("The bed, blinds and lights start at the wake-up; the alarm follows. Stopping an alarm only waits for the next one. Taking the morning photos ends today's.")
+                    Text("The bed, blinds and lights start at the wake-up; the alarm follows. On a morning the smart wake may still wait out deep or REM sleep, it counts from the latest the bed may ring. Stopping an alarm only waits for the next one. Taking the morning photos ends today's.")
                 }
             }
             .navigationTitle("Morning")
