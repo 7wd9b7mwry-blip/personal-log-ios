@@ -142,9 +142,12 @@ struct PlanItem: Identifiable, Hashable {
 }
 
 struct DoneChore: Identifiable, Hashable {
+    let doneId: Int
+    let choreId: Int
     let name: String
     let at: Date
-    var id: String { name + "\(at.timeIntervalSince1970)" }
+    let how: String
+    var id: Int { doneId }
 }
 
 /// Something the plan works around (routine.day_blocks): a calendar busy time, a hold, a place I'm at or was at.
@@ -289,6 +292,9 @@ final class Chores: ObservableObject {
     func delete(_ c: Chore) async { if let id = c.id { await call("app_chore_delete", ["p_id": id]) } }
 
     /// done | undo | tomorrow | later (minutes)
+    /// Not done after all (one of Done today): stays unmarked; the sensor / event that marked it doesn't mark it again.
+    func undo(_ d: DoneChore) async { await call("app_chore_action", ["p_id": d.choreId, "p_action": "undo_done", "p_minutes": d.doneId]) }
+
     func act(_ choreId: Int, _ action: String, minutes: Int? = nil) async {
         var body: [String: Any] = ["p_id": choreId, "p_action": action]
         if let minutes { body["p_minutes"] = minutes }
@@ -338,8 +344,10 @@ final class Chores: ObservableObject {
         chores = ((r["chores"] as? [[String: Any]]) ?? []).map(Chore.init)
         rooms = r["rooms"] as? [String] ?? []
         doneToday = ((r["done_today"] as? [[String: Any]]) ?? []).compactMap { x in
-            guard let n = x["name"] as? String, let at = (x["at"] as? String).flatMap(ChoreTime.instant) else { return nil }
-            return DoneChore(name: n, at: at)
+            guard let n = x["name"] as? String, let at = (x["at"] as? String).flatMap(ChoreTime.instant),
+                  let did = (x["id"] as? NSNumber)?.intValue, let cid = (x["chore_id"] as? NSNumber)?.intValue
+            else { return nil }
+            return DoneChore(doneId: did, choreId: cid, name: n, at: at, how: x["how"] as? String ?? "")
         }
         loadedAt = Date()
     }
@@ -500,11 +508,20 @@ struct ChoresView: View {
                     }
                 }
                 if !chores.doneToday.isEmpty {
-                    Section("Done today") {
+                    Section {
                         ForEach(chores.doneToday) { d in
-                            LabeledContent(d.name, value: d.at.formatted(date: .omitted, time: .shortened))
+                            LabeledContent(d.name, value: d.at.formatted(date: .omitted, time: .shortened)
+                                           + (d.how == "tap" ? "" : " · auto"))
                                 .foregroundStyle(.secondary)
+                                .swipeActions {
+                                    Button("Not done") { Task { await chores.undo(d) } }.tint(.orange)
+                                }
+                                .contextMenu {
+                                    Button("Not done", systemImage: "arrow.uturn.backward") { Task { await chores.undo(d) } }
+                                }
                         }
+                    } header: { Text("Done today") } footer: {
+                        Text("Swipe or hold one that isn't done: it goes back on the plan, and the sensor that marked it won't mark it again from the same reading.")
                     }
                 }
                 ForEach(chores.days.dropFirst()) { d in
