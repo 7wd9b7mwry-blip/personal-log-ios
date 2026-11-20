@@ -155,7 +155,9 @@ struct InsightCard: View {
                 }
             }
             if loading {
-                HStack(spacing: 8) { ProgressView(); Muted(text: "Looking through your data… (up to a minute)") }
+                HStack(spacing: 8) { ProgressView(); Muted(text: page == .home && !store.focusReports.isEmpty
+                    ? "Writing the perspective reports first, then this overview from them… (a few minutes)"
+                    : "Looking through your data… (up to a minute)") }
             } else if let i = insight {
                 if let h = i.headline, !h.isEmpty { LinkedText(text: h, size: 15, weight: .semibold).padding(.bottom, 2) }
                 ForEach(i.insights ?? [], id: \.self) { t in LinkedText(text: t) }
@@ -185,6 +187,16 @@ struct InsightCard: View {
                 Pill(text: sec.label, kind: sec.type == "test" ? .good : sec.type == "watch" || sec.type == "hypothesis" ? .warn : .info)
                 Text(LinkedText.plain(sec.title)).font(.system(size: 15, weight: .semibold)).foregroundStyle(Theme.text)
                     .fixedSize(horizontal: false, vertical: true)
+            }
+            if let f = sec.from {
+                // from a perspective report (the overview ranks across them): opens it
+                if let fo = store.focusReports.first(where: { $0.id == f.id }) {
+                    NavigationLink(value: Route.focus(fo)) {
+                        Label("From \(f.title)", systemImage: "person.crop.rectangle").font(.system(size: 12, weight: .medium))
+                    }.buttonStyle(.plain).foregroundStyle(Theme.accent)
+                } else {
+                    Label("From \(f.title)", systemImage: "person.crop.rectangle").font(.system(size: 12)).foregroundStyle(Theme.muted)
+                }
             }
             if let r = sec.reason { Text(LinkedText.plain(r)).font(.system(size: 13)).foregroundStyle(Theme.sub).fixedSize(horizontal: false, vertical: true) }
             ForEach(sec.items, id: \.self) { l in lookRow(l) }

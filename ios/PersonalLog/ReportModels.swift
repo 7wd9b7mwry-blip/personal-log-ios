@@ -145,6 +145,12 @@ struct Insight: Decodable, Hashable {
     var ready: Bool { none != true && queued != true && headline != nil }
 }
 
+/// A focused report an overview idea comes from (its id and title).
+struct FromFocus: Decodable, Hashable {
+    let id: Int
+    let title: String
+}
+
 /// One idea the AI found: its type, a short title and reasoning, and the trends / relationships to open for it.
 struct ISection: Decodable, Hashable {
     let type: String          // pattern | trend | hypothesis | test | watch
@@ -152,6 +158,7 @@ struct ISection: Decodable, Hashable {
     var reason: String?
     var items: [Look] = []
     var followups: [String]?   // questions worth asking next about this idea
+    var from: FromFocus?       // the overview's: the perspective report it comes from
 
     var label: String {
         ["pattern": "Pattern", "trend": "Trend", "hypothesis": "Hypothesis", "test": "Worth testing", "watch": "Watch"][type] ?? type.capitalized
