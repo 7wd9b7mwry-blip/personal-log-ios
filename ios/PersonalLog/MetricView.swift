@@ -168,12 +168,23 @@ struct MetricView: View {
             RangePicker(days: $range, oldest: days.first?.day)
             // a finger on the chart shows the nearest day's value and date
             let hit = touched.flatMap { t in shown.min { abs($0.day.timeIntervalSince(t)) < abs($1.day.timeIntervalSince(t)) } }
+            // the trend over the shown days (measured ones only), x in days since the first
+            let origin = shown.first?.day ?? Date()
+            let trend = TrendFit.fit(shown.filter { !$0.filled }.map { ($0.day.timeIntervalSince(origin) / 86400, $0.value) })
             Chart {
                 ForEach(shown) { d in
-                    LineMark(x: .value("Day", d.day), y: .value(label, d.value * f)).interpolationMethod(.monotone).foregroundStyle(Theme.accent)
+                    LineMark(x: .value("Day", d.day), y: .value(label, d.value * f), series: .value("Series", "value"))
+                        .interpolationMethod(.monotone).foregroundStyle(Theme.accent)
                     if range <= 90 {
                         PointMark(x: .value("Day", d.day), y: .value(label, d.value * f)).symbolSize(12)
                             .foregroundStyle(d.filled ? Color.gray : Theme.accent)
+                    }
+                }
+                if let trend {
+                    ForEach(Array(trend.points.enumerated()), id: \.offset) { _, p in
+                        LineMark(x: .value("Day", origin.addingTimeInterval(p.x * 86400)), y: .value(label, p.y * f),
+                                 series: .value("Series", "trend"))
+                            .foregroundStyle(trend.color).lineStyle(trend.stroke)
                     }
                 }
                 if let hit {
@@ -189,6 +200,14 @@ struct MetricView: View {
             .chartYScale(domain: .automatic(includesZero: false))
             .chartYAxisLabel(label)
             .frame(height: 200)
+            if let trend {
+                let k = range <= 30 ? 1.0 : range <= 90 ? 7.0 : 30.0
+                let per = range <= 30 ? "a day" : range <= 90 ? "a week" : "a month"
+                TrendCaption(fit: trend, text: trend.caption(
+                    change: { Units.format($0 * k, m?.unit, weightUnit: r.weightUnit) },
+                    at: { origin.addingTimeInterval($0 * 86400).formatted(.dateTime.month(.abbreviated).day()) },
+                    per: per, overTime: true))
+            }
         }
     }
 

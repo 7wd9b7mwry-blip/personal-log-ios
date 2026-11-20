@@ -62,7 +62,15 @@ struct PairView: View {
                         Muted(text: dayBefore ? "\(r.name(lever)) the day before vs \(r.name(target))" : "\(r.name(lever)) and \(r.name(target)) the same day")
                         if pts.count >= 5 {
                             bins(pts, lu, tu)
-                            scatter(pts, lu, tu)
+                            let trend = TrendFit.fit(pts)
+                            scatter(pts, lu, tu, trend)
+                            if let trend, let lo = pts.map(\.0).min(), let hi = pts.map(\.0).max() {
+                                TrendCaption(fit: trend, text: trend.caption(
+                                    change: { Units.format($0 * (hi - lo), tu, weightUnit: r.weightUnit) },
+                                    at: { Units.format($0, lu, weightUnit: r.weightUnit) + " of \(r.name(lever))" },
+                                    per: "from the lowest to the highest \(r.name(lever))",
+                                    goalMin: r.key(target)?.goal.map { $0 == "min" }))
+                            }
                             Muted(text: "\(pts.count) days" + correlation(pts))
                         } else {
                             Muted(text: loaded ? (error ?? "Too few days with both in this range (\(pts.count)).") : "Loading…")
@@ -125,13 +133,19 @@ struct PairView: View {
         return hypot(x - p.x, y - p.y)
     }
 
-    private func scatter(_ pts: [(Double, Double)], _ lu: String?, _ tu: String?) -> some View {
+    private func scatter(_ pts: [(Double, Double)], _ lu: String?, _ tu: String?, _ trend: TrendFit?) -> some View {
         let (fx, ax) = Units.axis(lu, values: pts.map(\.0), weightUnit: r.weightUnit)
         let (fy, ay) = Units.axis(tu, values: pts.map(\.1), weightUnit: r.weightUnit)
         return Chart {
             ForEach(Array(pts.enumerated()), id: \.offset) { item in
                 PointMark(x: .value(ax, item.element.0 * fx), y: .value(ay, item.element.1 * fy)).symbolSize(18)
                     .foregroundStyle(Theme.accent.opacity(0.7))
+            }
+            if let trend {
+                ForEach(Array(trend.points.enumerated()), id: \.offset) { _, p in
+                    LineMark(x: .value(ax, p.x * fx), y: .value(ay, p.y * fy), series: .value("Series", "trend"))
+                        .foregroundStyle(trend.color).lineStyle(trend.stroke)
+                }
             }
             if let i = touched, i < pts.count {
                 PointMark(x: .value(ax, pts[i].0 * fx), y: .value(ay, pts[i].1 * fy)).symbolSize(90).foregroundStyle(Theme.accent)
