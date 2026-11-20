@@ -141,6 +141,8 @@ struct Insight: Decodable, Hashable {
     var model: String?
     var cached_at: String?
     var upgrading: Bool?     // written before follow-up questions existed: a rewrite is coming
+    var unsynced: Bool?      // the copy saved on the phone (Store.cachedInsight), not this time's server answer
+    var syncError: String?   // why the server couldn't be asked
 
     var ready: Bool { none != true && queued != true && headline != nil }
 }
@@ -177,6 +179,8 @@ struct AskAnswer: Decodable, Hashable {
     var queued: Bool?
     var pending: Bool?
     var error: String?
+    var unsynced: Bool?      // the copy saved on the phone
+    var syncError: String?
 
     var ready: Bool { answer != nil }
 }

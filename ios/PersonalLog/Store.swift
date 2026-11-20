@@ -1,3 +1,4 @@
+import CryptoKit
 import Foundation
 import Network
 import UIKit
@@ -256,18 +257,64 @@ final class Store: ObservableObject {
         } }
     }
 
+    // MARK: AI answers saved on the phone
+
+    /// Every AI look and answer the server returns is saved on the phone (insights/, one file per page or question),
+    /// so it shows at once and without a connection. One shown from here is marked `unsynced` (the screen says so)
+    /// until the server answers again.
+    private var insightDir: URL {
+        let d = dir.appendingPathComponent("insights", isDirectory: true)
+        try? FileManager.default.createDirectory(at: d, withIntermediateDirectories: true)
+        return d
+    }
+
+    private func cacheFile(_ key: [String: Any]) -> URL {
+        let data = (try? JSONSerialization.data(withJSONObject: key, options: [.sortedKeys])) ?? Data()
+        return insightDir.appendingPathComponent(SHA256.hash(data: data).map { String(format: "%02x", $0) }.joined() + ".json")
+    }
+
+    /// The page's AI look saved on the phone, marked unsynced.
+    func cachedInsight(_ page: InsightPage, error: String? = nil) -> Insight? {
+        guard let data = try? Data(contentsOf: cacheFile(page.body)),
+              var i = try? JSONDecoder().decode(Insight.self, from: data), i.ready else { return nil }
+        i.unsynced = true
+        i.syncError = error
+        return i
+    }
+
+    private func askKey(_ page: InsightPage, _ section: String, _ question: String, _ thread: [(String, String)]) -> [String: Any] {
+        ["page": page.body, "section": section, "question": question, "thread": thread.map(\.0)]
+    }
+
+    private static func message(_ error: Error) -> String {
+        if case let APIError.http(code, text) = error {
+            let msg = ((try? JSONSerialization.jsonObject(with: Data(text.utf8))) as? [String: Any])?["error"] as? String
+            return "\(code): \(msg ?? text)"
+        }
+        return error.localizedDescription
+    }
+
     /// The AI's take on a report page (the app-insight Edge Function). `cachedOnly`: the stored answer, or a status
     /// (none / pending / error); otherwise a new one is queued for the PC's Claude Code worker unless one is stored.
+    /// A finished one is saved on the phone; when the server can't be reached, the saved one comes back (unsynced).
     func insight(_ page: InsightPage, cachedOnly: Bool, refresh: Bool = false) async throws -> Insight {
         var body: [String: Any] = page.body
         if cachedOnly { body["cached_only"] = true }
         if refresh { body["refresh"] = true }
         do {
             let data = try await API(creds: creds).function("app-insight", json: body, timeout: 30)
-            return try JSONDecoder().decode(Insight.self, from: data)
-        } catch let APIError.http(code, text) {
-            let msg = ((try? JSONSerialization.jsonObject(with: Data(text.utf8))) as? [String: Any])?["error"] as? String
-            throw APIError.http(code, msg ?? text)
+            let i = try JSONDecoder().decode(Insight.self, from: data)
+            if i.ready { try? data.write(to: cacheFile(page.body), options: .atomic) }
+            return i
+        } catch is CancellationError {
+            throw CancellationError()
+        } catch {
+            if let c = cachedInsight(page, error: Self.message(error)) { return c }
+            if case let APIError.http(code, text) = error {
+                let msg = ((try? JSONSerialization.jsonObject(with: Data(text.utf8))) as? [String: Any])?["error"] as? String
+                throw APIError.http(code, msg ?? text)
+            }
+            throw error
         }
     }
 
@@ -277,12 +324,25 @@ final class Store: ObservableObject {
         var body: [String: Any] = page.body
         body["ask"] = ["section": section, "question": question, "thread": thread.map { ["q": $0.0, "a": $0.1] }]
         if cachedOnly { body["cached_only"] = true }
+        let file = cacheFile(askKey(page, section, question, thread))
         do {
             let data = try await API(creds: creds).function("app-insight", json: body, timeout: 30)
-            return try JSONDecoder().decode(AskAnswer.self, from: data)
-        } catch let APIError.http(code, text) {
-            let msg = ((try? JSONSerialization.jsonObject(with: Data(text.utf8))) as? [String: Any])?["error"] as? String
-            throw APIError.http(code, msg ?? text)
+            let a = try JSONDecoder().decode(AskAnswer.self, from: data)
+            if a.ready { try? data.write(to: file, options: .atomic) }
+            return a
+        } catch is CancellationError {
+            throw CancellationError()
+        } catch {
+            if let d = try? Data(contentsOf: file), var a = try? JSONDecoder().decode(AskAnswer.self, from: d), a.ready {
+                a.unsynced = true
+                a.syncError = Self.message(error)
+                return a
+            }
+            if case let APIError.http(code, text) = error {
+                let msg = ((try? JSONSerialization.jsonObject(with: Data(text.utf8))) as? [String: Any])?["error"] as? String
+                throw APIError.http(code, msg ?? text)
+            }
+            throw error
         }
     }
 

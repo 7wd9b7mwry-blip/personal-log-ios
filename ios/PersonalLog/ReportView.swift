@@ -13,7 +13,13 @@ struct ReportView: View {
             ZStack {
                 Theme.page.ignoresSafeArea()
                 if let r = store.report {
-                    ReportHome(r: r)
+                    VStack(spacing: 0) {
+                        if let e = store.reportError {
+                            UnsyncedNote(text: "Saved on this phone\(store.reportDate.map { " (report of \($0))" } ?? "") · not synced", detail: e)
+                                .padding(.horizontal, 16).padding(.vertical, 6)
+                        }
+                        ReportHome(r: r)
+                    }
                 } else {
                     VStack(spacing: 12) {
                         if loading { ProgressView() }
@@ -158,13 +164,19 @@ struct InsightCard: View {
                 HStack(spacing: 8) { ProgressView(); Muted(text: page == .home && !store.focusReports.isEmpty
                     ? "Writing the perspective reports first, then this overview from them… (a few minutes)"
                     : "Looking through your data… (up to a minute)") }
-            } else if let i = insight {
+            }
+            if let i = insight, !loading || i.unsynced == true {
+                if i.unsynced == true {
+                    UnsyncedNote(text: "Saved on this phone\(i.cached_at.flatMap(ChoreTime.instant).map { ", written " + $0.formatted(date: .abbreviated, time: .shortened) } ?? "") · not synced",
+                                 detail: i.syncError ?? error)
+                }
                 if let h = i.headline, !h.isEmpty { LinkedText(text: h, size: 15, weight: .semibold).padding(.bottom, 2) }
                 ForEach(i.insights ?? [], id: \.self) { t in LinkedText(text: t) }
                 ForEach(i.sections ?? [], id: \.self) { sec in sectionView(sec) }
                 if (i.sections ?? []).isEmpty { ForEach(i.look_at ?? [], id: \.self) { l in lookRow(l) } }
                 ForEach(i.caveats ?? [], id: \.self) { c in Muted(text: "⚠︎ " + LinkedText.plain(c)) }
                 Muted(text: "Written by Claude from these numbers; may contain mistakes.").font(.system(size: 11))
+            } else if loading {
             } else if let error {
                 Muted(text: error)
                 Button("Try again") { Task { await load(cachedOnly: false) } }.font(.system(size: 14))
@@ -229,6 +241,8 @@ struct InsightCard: View {
     /// takes about half a minute.
     private func load(cachedOnly: Bool, refresh: Bool = false) async {
         defer { loading = false; checked = true }
+        // the copy saved on the phone at once (marked not synced), replaced when the server answers
+        if insight == nil, let c = store.cachedInsight(page) { insight = c }
         do {
             error = nil
             var i = try await store.insight(page, cachedOnly: cachedOnly, refresh: refresh)
@@ -357,6 +371,7 @@ struct SectionAsk: View {
             Text(qa.question).font(.system(size: 14, weight: .semibold)).foregroundStyle(Theme.text)
                 .fixedSize(horizontal: false, vertical: true)
             if let a = qa.answer, let text = a.answer {
+                if a.unsynced == true { UnsyncedNote(text: "Saved on this phone · not synced", detail: a.syncError) }
                 LinkedText(text: text)
                 ForEach(a.points ?? [], id: \.self) { p in
                     Text("• " + LinkedText.plain(p)).font(.system(size: 13)).foregroundStyle(Theme.sub)
@@ -736,5 +751,19 @@ struct PairRow: View {
         }
         Muted(text: p.methods.joined(separator: ", ") + (p.methods.count > 1 ? " agree" : "")
               + ((p.disagree ?? []).isEmpty ? "" : " · \((p.disagree ?? []).joined(separator: ", ")) disagree")).font(.system(size: 12))
+    }
+}
+
+/// Says what's shown is the copy saved on the phone, not synced with the server (offline, or the server is slow).
+struct UnsyncedNote: View {
+    let text: String
+    var detail: String?
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 1) {
+            Label(text, systemImage: "icloud.slash").font(.system(size: 12, weight: .medium)).foregroundStyle(.orange)
+            if let d = detail, !d.isEmpty { Text(d.prefix(120)).font(.system(size: 11)).foregroundStyle(Theme.muted).lineLimit(2) }
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
     }
 }
