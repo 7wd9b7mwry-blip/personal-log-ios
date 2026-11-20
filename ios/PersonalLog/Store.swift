@@ -57,7 +57,7 @@ final class Store: ObservableObject {
         }
         monitor.pathUpdateHandler = { [weak self] path in
             guard path.status == .satisfied else { return }
-            Task { @MainActor [weak self] in await self?.flush(); await self?.flushFood() }
+            Task { @MainActor [weak self] in await self?.flush(); await self?.flushFood(); await self?.flushPhotos() }
         }
         monitor.start(queue: DispatchQueue(label: "net"))
     }
@@ -110,6 +110,53 @@ final class Store: ObservableObject {
             if e.kind == "start" { running[e.name] = e.at }
             if e.kind == "end" { running[e.name] = nil }
             if (last[e.name] ?? .distantPast) < e.at { last[e.name] = e.at }
+        }
+    }
+
+    // MARK: photos
+
+    /// Photos waiting to be sent: one file each in photos/ (they're large: one per request), kept until the server has
+    /// them, so taking a photo (the morning ones stop the alarm) never waits on the network. The event id is fixed
+    /// when it's taken, so a retry after a lost answer doesn't store it twice.
+    private var photoDir: URL {
+        let d = dir.appendingPathComponent("photos", isDirectory: true)
+        try? FileManager.default.createDirectory(at: d, withIntermediateDirectories: true)
+        return d
+    }
+    private var flushingPhotos = false
+
+    func enqueuePhoto(_ event: [String: Any]) {
+        if let data = try? JSONSerialization.data(withJSONObject: event) {
+            let name = String(format: "%.3f", Date().timeIntervalSince1970) + "-" + UUID().uuidString + ".json"
+            try? data.write(to: photoDir.appendingPathComponent(name), options: .atomic)
+        }
+        Task { await flushPhotos() }
+    }
+
+    func flushPhotos() async {
+        guard !flushingPhotos, creds.isComplete else { return }
+        flushingPhotos = true
+        defer { flushingPhotos = false }
+        let files = ((try? FileManager.default.contentsOfDirectory(at: photoDir, includingPropertiesForKeys: nil)) ?? [])
+            .filter { $0.pathExtension == "json" }.sorted { $0.lastPathComponent < $1.lastPathComponent }
+        for (i, f) in files.enumerated() {
+            guard let data = try? Data(contentsOf: f),
+                  let ev = (try? JSONSerialization.jsonObject(with: data)) as? [String: Any] else {
+                try? FileManager.default.removeItem(at: f)
+                continue
+            }
+            do {
+                let r = try await API(creds: creds).rpc("ingest_event", json: ["events": [ev]])
+                let j = (try? JSONSerialization.jsonObject(with: r)) as? [String: Any] ?? [:]
+                guard j["received"] != nil else { message = "Photo not accepted: \(String(data: r, encoding: .utf8) ?? "")"; return }
+                if let rejected = j["rejected"] as? [[String: Any]], !rejected.isEmpty {   // sending again won't help
+                    message = "Photo rejected: \(rejected.first?["error"] ?? "")"
+                }
+                try? FileManager.default.removeItem(at: f)
+            } catch {
+                message = "Photos queued (\(files.count - i)): \(error.localizedDescription)"
+                return
+            }
         }
     }
 

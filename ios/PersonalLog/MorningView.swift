@@ -55,12 +55,22 @@ struct MorningSettings: Equatable {
 
 /// The wake alarm, Wayk style: an alarm `afterMinutes` after the wake time (the Eight Sleep, blinds and lights start at
 /// it) and another every `everyMinutes`, `count` in all, for the next seven days (refreshed in the background too, so
-/// it keeps going without the app opened). Stopping one only waits for the next; the chain is cancelled once the morning photos are taken. Alarms
+/// it keeps going without the app opened). Stopping one only waits for the next; the chain is cancelled the moment the
+/// first morning photo is taken (on the phone, before it is sent: a slow server never keeps the alarm going). Alarms
 /// are AlarmKit's (iOS 26), so they ring through silent mode and Focus. "I'm up" on the alarm stops the Eight Sleep
 /// alarm at once and opens the photos; "Snooze" waits for the next alarm; "Can't today" in the photos is the way out.
 @MainActor
 enum MorningAlarms {
     private static let key = "morningAlarms"   // [ISO date: alarm UUID]
+    private static let stoppedKey = "morningAlarmsStopped"   // the day the photos stopped them (yyyy-MM-dd)
+
+    /// Today's alarms were stopped by a photo (or "Can't today"): sync doesn't put them back before the server knows.
+    static var stoppedToday: Bool { UserDefaults.standard.string(forKey: stoppedKey) == dayKey(Date()) }
+
+    private static func dayKey(_ d: Date) -> String {
+        let c = Calendar.current.dateComponents([.year, .month, .day], from: d)
+        return String(format: "%04d-%02d-%02d", c.year ?? 0, c.month ?? 0, c.day ?? 0)
+    }
 
     static func sync(_ m: MorningSettings) async {
         guard #available(iOS 26.0, *) else { return }
@@ -70,7 +80,7 @@ enum MorningAlarms {
             let holidays = Store.shared.config.holidays
             for offset in 0..<7 {
                 guard let day = Calendar.current.date(byAdding: .day, value: offset, to: Date()) else { continue }
-                if offset == 0 && m.photosDoneToday { continue }
+                if offset == 0 && (m.photosDoneToday || stoppedToday) { continue }
                 // Home Assistant's wake-up schedule when the server sent it (from the latest the smart wake may still
                 // ring that morning), else the app's own times
                 let fromServer = m.alarmFrom.first { Calendar.current.isDate($0, inSameDayAs: day) }
@@ -98,9 +108,22 @@ enum MorningAlarms {
         _ = try? await API(creds: creds).rpc("app_home_action", json: ["p_action": "bed_alarm_stop"])
     }
 
-    /// Today's photos are in: the rest of today's alarms go.
+    /// A morning photo is in: the ringing alarm and the rest of today's go, on the phone, no network. Also any of the
+    /// app's alarms ringing now or due today that the list lost track of.
     static func cancelToday() {
+        UserDefaults.standard.set(dayKey(Date()), forKey: stoppedKey)
         guard #available(iOS 26.0, *) else { return }
+        let endOfDay = Calendar.current.startOfDay(for: Date()).addingTimeInterval(86400)
+        if let all = try? AlarmManager.shared.alarms {
+            for a in all {
+                var today = a.state == .alerting
+                if case .fixed(let at)? = a.schedule, at < endOfDay { today = true }
+                if today {
+                    try? AlarmManager.shared.stop(id: a.id)
+                    try? AlarmManager.shared.cancel(id: a.id)
+                }
+            }
+        }
         var scheduled = (UserDefaults.standard.dictionary(forKey: key) as? [String: String]) ?? [:]
         let end = Calendar.current.startOfDay(for: Date()).addingTimeInterval(86400)
         for (k, id) in scheduled {
@@ -149,7 +172,7 @@ enum MorningAlarms {
 struct MorningAlarmData: AlarmMetadata {}
 
 /// The alarm's "I'm up" button: stops the Eight Sleep alarm (the add-on, within ~10 s) and opens the app on the photo
-/// steps. The phone's own alarms keep coming until the photos are in (or "Can't today").
+/// steps. The phone's own alarms keep coming until the first photo is taken (or "Can't today").
 @available(iOS 26.0, *)
 struct OpenMorningPhotosIntent: LiveActivityIntent {
     static var title: LocalizedStringResource = "I'm up"
@@ -164,14 +187,15 @@ struct OpenMorningPhotosIntent: LiveActivityIntent {
 }
 
 /// The morning photos: three shots (the face, then each hand), each sent as a photo event (scored nightly like the
-/// Shortcut's). When all three are in, today's alarms stop and Morning photos is done; then it says what's next.
+/// Shortcut's). The first one taken stops today's alarms and the bed's at once, before anything is sent; the photos go
+/// through the app's photo queue (Store.enqueuePhoto: sent in the background, retried until the server has them), so
+/// the steps never wait on the network. When all three are taken Morning photos is done; then it says what's next.
 struct MorningPhotosView: View {
     @EnvironmentObject var store: Store
     @ObservedObject private var chores = Chores.shared
     @Environment(\.dismiss) private var dismiss
     @State private var step = 0
     @State private var camera = false
-    @State private var sending = false
     @State private var error: String?
     @State private var askSkip = false
 
@@ -194,9 +218,9 @@ struct MorningPhotosView: View {
                     Button {
                         camera = true
                     } label: {
-                        Label(sending ? "Sending…" : "Take photo", systemImage: "camera.fill").frame(maxWidth: .infinity)
+                        Label("Take photo", systemImage: "camera.fill").frame(maxWidth: .infinity)
                     }
-                    .buttonStyle(.borderedProminent).controlSize(.large).disabled(sending)
+                    .buttonStyle(.borderedProminent).controlSize(.large)
                 } else {
                     Image(systemName: "checkmark.circle.fill").font(.system(size: 72)).foregroundStyle(.green)
                     Text("Photos done").font(.title.bold())
@@ -224,33 +248,29 @@ struct MorningPhotosView: View {
             .fullScreenCover(isPresented: $camera) {
                 CameraPicker(front: steps[min(step, steps.count - 1)].front) { image in
                     camera = false
-                    if let image { Task { await send(image) } }
+                    if let image { take(image) }
                 }
                 .ignoresSafeArea()
             }
         }
     }
 
-    private func send(_ image: UIImage) async {
-        sending = true
-        defer { sending = false }
-        guard let data = image.resized(width: 1080).jpegData(compressionQuality: 0.82) else { return }
-        let name = steps[step].name
-        let event: [String: Any] = ["id": "app-photo-" + UUID().uuidString, "name": name, "kind": "photo",
-                                    "time": Fmt.iso(Date()), "photo": data.base64EncodedString()]
-        do {
-            let r = try await API(creds: store.creds).rpc("ingest_event", json: ["events": [event]])
-            let j = (try? JSONSerialization.jsonObject(with: r)) as? [String: Any] ?? [:]
-            if let rejected = j["rejected"] as? [[String: Any]], !rejected.isEmpty {
-                error = "Not accepted: \(rejected.first?["error"] ?? "")"
-                return
-            }
-            error = nil
-            step += 1
-            if step == steps.count { await finish() }
-        } catch {
-            self.error = "Couldn't send it: \(error.localizedDescription). Try again."
+    /// A photo taken: the alarms stop first (the first photo; on the phone, nothing waits on the server), then the
+    /// photo is queued to send in the background and the next step shows at once.
+    private func take(_ image: UIImage) {
+        if !MorningAlarms.stoppedToday {
+            MorningAlarms.cancelToday()
+            Task { await MorningAlarms.stopBed() }
         }
+        if let data = image.resized(width: 1080).jpegData(compressionQuality: 0.82) {
+            store.enqueuePhoto(["id": "app-photo-" + UUID().uuidString, "name": steps[step].name, "kind": "photo",
+                                "time": Fmt.iso(Date()), "photo": data.base64EncodedString()])
+            error = nil
+        } else {
+            error = "That photo couldn't be saved; the alarms are off anyway."
+        }
+        step += 1
+        if step == steps.count { Task { await finish() } }
     }
 
     /// The way out (traveling, the camera broke, ...): today's alarms and the bed's stop, Morning photos waits for

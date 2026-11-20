@@ -14,7 +14,7 @@ struct PersonalLogApp: App {
                 .onOpenURL { store.handle(url: $0) }
         }
         .onChange(of: phase) { _, p in
-            if p == .active { Task { await store.refresh(); await store.flush() } }
+            if p == .active { Task { await store.refresh(); await store.flush(); await store.flushPhotos() } }
             if p == .background { Self.scheduleMorningRefresh() }
         }
         // the wake alarms follow Home Assistant's wake-up schedule without the app opened: iOS wakes the app now and
