@@ -1,5 +1,6 @@
 import CryptoKit
 import Foundation
+import HealthKit
 import Network
 import UIKit
 
@@ -404,13 +405,44 @@ final class Store: ObservableObject {
         let api = API(creds: creds)
         Task { _ = try? await api.rpc("app_recipe_used", json: ["p_name": name]) }   // for the usual-first order
         Task { await flushFood() }
+        if !(foodDay?.mirror_macrofactor ?? false), saveWater(name, servings: servings, at: at) { return nil }
         guard let text = recipeInput(name, servings: servings, at: at) else { return nil }
         return (foodDay?.mirror_macrofactor ?? false) || recipeHasWater(name) ? shortcutURL(config.foodShortcut, input: text) : nil
     }
 
-    /// Water still goes to Apple Health through the Shortcut.
+    /// Water goes to Apple Health from the app (HealthKit) once that's allowed; until then through the Shortcut.
     private func recipeHasWater(_ name: String) -> Bool {
         recipes.recipes[name]?.items.contains { $0.kind == "water" } ?? false
+    }
+
+    // MARK: Apple Health (water)
+
+    private let health = HKHealthStore()
+    private let waterType = HKQuantityType(.dietaryWater)
+
+    var canWriteWater: Bool {
+        HKHealthStore.isHealthDataAvailable() && health.authorizationStatus(for: waterType) == .sharingAuthorized
+    }
+
+    /// Asks once for leave to write water to Apple Health (the system sheet; at the app's first open after this).
+    func askForHealth() {
+        guard HKHealthStore.isHealthDataAvailable(), health.authorizationStatus(for: waterType) == .notDetermined else { return }
+        health.requestAuthorization(toShare: [waterType], read: []) { _, _ in }
+    }
+
+    /// A recipe's water written straight to Apple Health: true when it has water and that's allowed (then the
+    /// Shortcut isn't needed off MacroFactor), false when it has none or the app may not write it.
+    private func saveWater(_ name: String, servings: Double, at: Date, queueHabits: Bool = true) -> Bool {
+        let oz = (recipes.recipes[name]?.items ?? []).filter { $0.kind == "water" }.reduce(0) { $0 + ($1.fl_oz ?? 0) } * servings
+        guard oz > 0, canWriteWater else { return false }
+        if queueHabits { _ = recipeInput(name, servings: servings, at: at) }   // its habit amounts are queued there
+        let sample = HKQuantitySample(type: waterType, quantity: HKQuantity(unit: .literUnit(with: .milli), doubleValue: (oz * 29.5735).rounded()),
+                                      start: at, end: at, metadata: [HKMetadataKeyFoodType: name])
+        health.save(sample) { [weak self] ok, error in
+            guard !ok else { return }
+            Task { @MainActor in self?.message = "Water not saved to Apple Health: \(error?.localizedDescription ?? "unknown")" }
+        }
+        return true
     }
 
     /// Calories of the logs not sent yet (so Today counts them already).
@@ -690,6 +722,7 @@ final class Store: ObservableObject {
         foodLogs.append(FoodLog(name: config.officeFood, servings: 1, at: now, source: "office"))
         write("food_logs.json", foodLogs)
         Task { await flushFood() }
+        if !(foodDay?.mirror_macrofactor ?? false), saveWater(config.officeFood, servings: 1, at: now, queueHabits: false) { return none }
         return (foodDay?.mirror_macrofactor ?? false) || recipeHasWater(config.officeFood) ? text : none
     }
 

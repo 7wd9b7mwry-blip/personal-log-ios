@@ -26,6 +26,7 @@ targets:
         ASSETCATALOG_COMPILER_APPICON_NAME: AppIcon
         GENERATE_INFOPLIST_FILE: NO
         CODE_SIGN_STYLE: Automatic
+        CODE_SIGN_ENTITLEMENTS: PersonalLog/PersonalLog.entitlements   # HealthKit: water to Apple Health
     info:
       path: PersonalLog/Info.plist
       properties:
@@ -39,6 +40,8 @@ targets:
         NSCameraUsageDescription: The Find tab's camera search shows the PC what you are pointing at, to spot a lost item.
         UIBackgroundModes: [fetch]
         BGTaskSchedulerPermittedIdentifiers: [morning-alarms]
+        NSHealthUpdateUsageDescription: Water you log here (a drink's water) is saved to Apple Health, without the Shortcut.
+        NSHealthShareUsageDescription: The app only writes water to Apple Health; it reads nothing from it.
         NSAlarmKitUsageDescription: The wake alarm rings until the morning face and hand photos are taken.
         NSRemindersFullAccessUsageDescription: The Chores tab keeps a Reminders list "Chores" with the next days' plan, to share, and marks a chore done when it is checked off there.
         NSCalendarsFullAccessUsageDescription: The Chores tab plans chores in your free time, so it reads when your calendar events are (busy times only).
