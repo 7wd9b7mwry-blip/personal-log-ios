@@ -124,7 +124,7 @@ struct AskAIView: View {
                 }
             }
             .fullScreenCover(isPresented: $camera) {
-                CameraPicker(front: false, flash: false) { img in
+                CameraPicker(front: false, flash: .auto) { img in
                     if let img { image = img }
                     camera = false
                 }
