@@ -638,7 +638,7 @@ struct TryRow: View {
     let t: RTry
 
     var body: some View {
-        let u = r.metric(t.lever)?.unit
+        let u = t.unit ?? r.metric(t.lever)?.unit
         HStack(spacing: 6) {
             Text("\(t.more ? "More" : "Less") \(r.name(t.lever))").font(.system(size: 14, weight: .semibold)).foregroundStyle(Theme.text)
             Badge(robust: t.robust, strongLabel: "stronger evidence")
