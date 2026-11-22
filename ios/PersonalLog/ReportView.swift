@@ -43,6 +43,7 @@ struct ReportView: View {
                         case .browse: BrowseView(r: r)
                         case let .entity(g): EntityView(r: r, g: g)
                         case let .focus(f): FocusReportView(r: r, focus: f)
+                        case .causal: CausalMapView()
                         }
                     }
                 }
@@ -119,6 +120,9 @@ struct ReportHome: View {
                     }
                 }
                 Card(title: "Explore") {
+                    CardRow(route: .causal) {
+                        Text("Causal map: what moves what, interactive").font(.system(size: 14)).foregroundStyle(Theme.text)
+                    }
                     CardRow(route: .browse) {
                         Text("All metrics by entity, and every relationship").font(.system(size: 14)).foregroundStyle(Theme.text)
                     }

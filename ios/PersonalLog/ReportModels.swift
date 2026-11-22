@@ -394,6 +394,7 @@ enum Route: Hashable {
     case browse
     case entity(CatalogGroup)
     case focus(FocusReport)
+    case causal
 
     init?(url: URL) {
         guard url.scheme == "pdb" else { return nil }
