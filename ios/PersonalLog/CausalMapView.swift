@@ -89,9 +89,13 @@ struct CausalMapView: View {
             .background(Color.white)
             .contentShape(Rectangle())
             .gesture(SimultaneousGesture(
-                MagnifyGesture().onChanged { zoom = max(0.5, min(4, zoomBase * $0.magnification)) }.onEnded { _ in zoomBase = zoom },
-                DragGesture().onChanged { pan = CGSize(width: panBase.width + $0.translation.width, height: panBase.height + $0.translation.height) }
-                    .onEnded { _ in panBase = pan }))
+                MagnifyGesture().onChanged {
+                    zoom = max(0.8, min(4, zoomBase * $0.magnification))
+                    pan = bounded(pan, size); panBase = pan
+                }.onEnded { _ in zoomBase = zoom },
+                DragGesture().onChanged {
+                    pan = bounded(CGSize(width: panBase.width + $0.translation.width, height: panBase.height + $0.translation.height), size)
+                }.onEnded { _ in panBase = pan }))
             .onTapGesture(count: 2) { p in if let id = hit(p, size: size) { expand(id) } }
             .onTapGesture { p in selected = hit(p, size: size) }
         }
@@ -103,6 +107,17 @@ struct CausalMapView: View {
         let x = pad + p.x * (size.width - 2 * pad), y = pad + p.y * (size.height - 2 * pad)
         let cx = size.width / 2, cy = size.height / 2
         return CGPoint(x: cx + (x - cx) * zoom + pan.width, y: cy + (y - cy) * zoom + pan.height)
+    }
+
+    /// A pan that keeps the metrics in view: the layout's edge never moves past the frame's centre.
+    private func bounded(_ p: CGSize, _ size: CGSize) -> CGSize {
+        let pts = shown.compactMap { pos[$0] }
+        guard !pts.isEmpty else { return .zero }
+        let pad: CGFloat = 40, w = size.width - 2 * pad, h = size.height - 2 * pad
+        // the layout's extent around the frame centre, at this zoom
+        let xs = pts.map { (pad + $0.x * w - size.width / 2) * zoom }, ys = pts.map { (pad + $0.y * h - size.height / 2) * zoom }
+        let lo = CGSize(width: -(xs.max()!), height: -(ys.max()!)), hi = CGSize(width: -(xs.min()!), height: -(ys.min()!))
+        return CGSize(width: min(max(p.width, lo.width), hi.width), height: min(max(p.height, lo.height), hi.height))
     }
 
     private func hit(_ p: CGPoint, size: CGSize) -> Int? {
