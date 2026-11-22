@@ -334,6 +334,7 @@ struct SectionAsk: View {
             }
             .buttonStyle(.plain)
             .padding(.top, 6)
+            .task { await loadSaved() }
             if expanded {
                 ForEach(thread) { qa in qaView(qa) }
                 if !busy {
@@ -389,6 +390,25 @@ struct SectionAsk: View {
         .background(Color.white.opacity(0.9), in: RoundedRectangle(cornerRadius: 8))
     }
 
+    /// The questions already asked on this idea for the current report (leaving the page or closing the app keeps
+    /// them): shown again, and one still being answered is waited on again.
+    private func loadSaved() async {
+        guard thread.isEmpty else { return }
+        let saved = await store.asks(page).filter { $0.section == section.title && !($0.question ?? "").isEmpty }
+        guard thread.isEmpty, !saved.isEmpty else { return }
+        thread = saved.map { s in
+            var qa = QA(question: s.question ?? "")
+            if let a = s.answer, a.ready { qa.answer = a }
+            else if s.pending != true { qa.error = s.error.map { "It failed: \($0.prefix(160))" } ?? "No answer was stored." }
+            return qa
+        }
+        expanded = true
+        if let i = thread.indices.last, thread[i].answer == nil, thread[i].error == nil {
+            let earlier = thread.dropLast().compactMap { qa in qa.answer?.answer.map { (qa.question, LinkedText.plain($0)) } }
+            wait(thread[i].question, earlier: Array(earlier), idx: i, first: nil)
+        }
+    }
+
     private func ask(_ q: String) {
         let question = q.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !question.isEmpty, !busy else { return }
@@ -396,10 +416,16 @@ struct SectionAsk: View {
         thread.append(QA(question: question))
         draft = ""
         focused = false
-        let idx = thread.count - 1
+        wait(question, earlier: earlier, idx: thread.count - 1, first: false)
+    }
+
+    /// Asks (first: false) or only checks for the stored answer (first: nil, a question asked before), then waits.
+    private func wait(_ question: String, earlier: [(String, String)], idx: Int, first: Bool?) {
         Task {
             do {
-                var a = try await store.ask(page, section: section.title, question: question, thread: earlier, cachedOnly: false)
+                var a = try await store.ask(page, section: section.title, question: question, thread: earlier,
+                                            cachedOnly: first == nil)
+                if first == nil, !a.ready { a.pending = true }
                 for _ in 0..<80 where !a.ready {   // up to about 4 minutes
                     if a.queued != true && a.pending != true && a.none != true { break }
                     try await Task.sleep(nanoseconds: 3_000_000_000)

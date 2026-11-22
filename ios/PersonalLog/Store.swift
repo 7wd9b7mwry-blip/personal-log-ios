@@ -319,6 +319,16 @@ final class Store: ObservableObject {
         }
     }
 
+    /// The questions asked on a page for the current report, in the order asked (with their answers, or pending).
+    func asks(_ page: InsightPage) async -> [SavedAsk] {
+        var body: [String: Any] = page.body
+        body["asks"] = true
+        struct R: Decodable { let asks: [SavedAsk] }
+        guard let data = try? await API(creds: creds).function("app-insight", json: body, timeout: 30),
+              let r = try? JSONDecoder().decode(R.self, from: data) else { return [] }
+        return r.asks
+    }
+
     /// A question about one idea of a page's AI look: answered by the PC's Claude Code worker with the page's data, the
     /// AI look and the thread so far as context; stored, so the same question again is instant.
     func ask(_ page: InsightPage, section: String, question: String, thread: [(String, String)], cachedOnly: Bool) async throws -> AskAnswer {

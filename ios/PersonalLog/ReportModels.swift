@@ -185,6 +185,16 @@ struct AskAnswer: Decodable, Hashable {
     var ready: Bool { answer != nil }
 }
 
+/// A question asked on a page for the current report (app-insight "asks"), shown again when the page is reopened.
+struct SavedAsk: Decodable {
+    var section: String?
+    var question: String?
+    var thread: [String]?
+    var answer: AskAnswer?
+    var pending: Bool?
+    var error: String?
+}
+
 struct Look: Decodable, Hashable {
     let kind: String
     var id: Int?
