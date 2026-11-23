@@ -16,7 +16,7 @@ struct CausalGraph: Decodable {
         let size: Double?       // partial correlation (discovery) or effect in SDs (effect)
         let q: Double?
     }
-    struct Report: Decodable, Hashable, Identifiable { let id: Int; let title: String; let metrics: [Int] }
+    struct Report: Decodable, Hashable, Identifiable { let id: Int; let title: String; let metrics: [Int]; let area: [Int]? }
     let nodes: [Node]
     let edges: [Edge]
     let reports: [Report]?
@@ -50,11 +50,20 @@ struct CausalMapView: View {
         kindEdges.filter { shown.contains($0.source) && shown.contains($0.target) }
     }
 
-    /// The metrics the map centres on: the report's, else the key metrics.
-    private var seeds: Set<Int> {
+    /// The metrics the map centres on: the report's outcomes and area metrics, else the key metrics.
+    private var seeds: Set<Int> { centre.union(areaSeeds) }
+
+    /// Drawn large: the report's outcomes, else the key metrics.
+    private var centre: Set<Int> {
         guard let g = graph else { return [] }
         if let f = focus, let r = g.reports?.first(where: { $0.id == f }) { return Set(r.metrics) }
         return Set(g.nodes.filter { $0.key == true }.map(\.id))
+    }
+
+    /// Drawn medium: the report's area metrics (its other measures, inputs too).
+    private var areaSeeds: Set<Int> {
+        guard let f = focus, let r = graph?.reports?.first(where: { $0.id == f }) else { return [] }
+        return Set(r.area ?? []).subtracting(centre)
     }
 
     private var focusTitle: String {
@@ -89,8 +98,9 @@ struct CausalMapView: View {
                     }
                     .font(.system(size: 13))
                     .padding(.bottom, 6)
-                    Muted(text: depth == 0 ? "\(focusTitle) (large dots) on the whole map."
-                          : "\(focusTitle) (large dots) and the metrics within \(depth) link\(depth == 1 ? "" : "s") of them.")
+                    Muted(text: (depth == 0 ? "\(focusTitle) on the whole map."
+                          : "\(focusTitle) and the metrics within \(depth) link\(depth == 1 ? "" : "s") of them.")
+                          + (focus == nil ? " Large dots: the key metrics." : " Large dots: the report's outcomes; medium: its area metrics."))
                         .font(.system(size: 12))
                     if let graph, !graph.edges.isEmpty {
                         canvas.frame(height: 460).clipShape(RoundedRectangle(cornerRadius: 8))
@@ -188,14 +198,14 @@ struct CausalMapView: View {
 
     private func drawNode(_ id: Int, ctx: inout GraphicsContext, size: CGSize) {
         guard let p = screen(id, size), let n = nodes[id] else { return }
-        let key = seeds.contains(id), sel = selected == id
+        let key = centre.contains(id), own = areaSeeds.contains(id), sel = selected == id
         let linked = selected.map { s in visibleEdges.contains { ($0.source == s && $0.target == id) || ($0.target == s && $0.source == id) } } ?? false
-        let r: CGFloat = key ? 10 : 6
+        let r: CGFloat = key ? 10 : own ? 8 : 6
         let dim = selected != nil && !sel && !linked
         ctx.fill(Path(ellipseIn: CGRect(x: p.x - r, y: p.y - r, width: 2 * r, height: 2 * r)),
-                 with: .color((key ? Theme.accent : Color.gray).opacity(dim ? 0.25 : 1)))
+                 with: .color((key ? Theme.accent : own ? Theme.accent.opacity(0.55) : Color.gray).opacity(dim ? 0.25 : 1)))
         if sel { ctx.stroke(Path(ellipseIn: CGRect(x: p.x - r - 3, y: p.y - r - 3, width: 2 * r + 6, height: 2 * r + 6)), with: .color(Theme.accent), lineWidth: 2) }
-        if key || sel || linked || zoom > 1.6 {
+        if key || own || sel || linked || zoom > 1.6 {
             let label = Text(n.name).font(.system(size: key || sel ? 11 : 9, weight: key || sel ? .semibold : .regular))
                 .foregroundColor(Theme.text.opacity(dim ? 0.3 : 1))
             ctx.draw(label, at: CGPoint(x: p.x, y: p.y + r + 8), anchor: .top)
