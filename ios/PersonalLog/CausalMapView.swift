@@ -2,8 +2,9 @@ import SwiftUI
 
 /// The causal map (public.app_causal_graph): PCMCI+ discoveries and the strongest effect estimates (lever's day held
 /// equal) as a graph. It opens on the key metrics, or a focused report's metrics, and the metrics within N links of
-/// them (1 to 3, or the whole map); tap a metric to select it (its links light up and list below), double-tap to
-/// bring in what drives it; pinch and drag to move around. A row opens the metric or the pair.
+/// them (1 to 3, or the whole map), links at least `minStrength` strong; tap a metric to select it (its links light up
+/// and list below), double-tap to bring in what drives it; pinch and drag to move around. A row opens the metric or the
+/// pair.
 struct CausalGraph: Decodable {
     struct Node: Decodable, Identifiable, Hashable { let id: Int; let name: String; let domain: String?; let key: Bool? }
     struct Edge: Decodable, Hashable {
@@ -32,6 +33,7 @@ struct CausalMapView: View {
     @State private var selected: Int?
     @State private var showEffects = true
     @State private var showDiscovery = true
+    @State private var minStrength = 0.0             // links weaker than this (|partial r| or |SD|) are left out
     @State private var pos: [Int: CGPoint] = [:]     // layout, unit square
     @State private var zoom: CGFloat = 1
     @State private var zoomBase: CGFloat = 1
@@ -43,7 +45,7 @@ struct CausalMapView: View {
     private var nodes: [Int: CausalGraph.Node] { Dictionary(uniqueKeysWithValues: (graph?.nodes ?? []).map { ($0.id, $0) }) }
 
     private var kindEdges: [CausalGraph.Edge] {
-        (graph?.edges ?? []).filter { $0.method == "effect" ? showEffects : showDiscovery }
+        (graph?.edges ?? []).filter { ($0.method == "effect" ? showEffects : showDiscovery) && abs($0.size ?? 0) >= minStrength }
     }
 
     private var visibleEdges: [CausalGraph.Edge] {
@@ -97,6 +99,11 @@ struct CausalMapView: View {
                         Button("Reset") { reset() }.font(.system(size: 13))
                     }
                     .font(.system(size: 13))
+                    HStack {
+                        Text("Min strength").font(.system(size: 12)).foregroundStyle(Theme.muted)
+                        Slider(value: $minStrength, in: 0...0.6, step: 0.05, onEditingChanged: { editing in if !editing { reset() } })
+                        Text(String(format: "%.2f", minStrength)).font(.system(size: 12).monospacedDigit()).frame(width: 34)
+                    }
                     .padding(.bottom, 6)
                     Muted(text: (depth == 0 ? "\(focusTitle) on the whole map."
                           : "\(focusTitle) and the metrics within \(depth) link\(depth == 1 ? "" : "s") of them.")
