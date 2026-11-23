@@ -51,6 +51,11 @@ struct FocusReportView: View {
                 Muted(text: current.question).font(.system(size: 13))
                 InsightCard(page: .focus(current.id), auto: true, title: current.title)
                     .id(current.question)   // a changed question loads its new report
+                Card(title: "Explore") {
+                    CardRow(route: .causal(current.id)) {
+                        Text("Causal map of this report's metrics").font(.system(size: 14)).foregroundStyle(Theme.text)
+                    }
+                }
             }
             .reportPage()
         }

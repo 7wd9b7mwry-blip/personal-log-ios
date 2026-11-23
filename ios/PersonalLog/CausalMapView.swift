@@ -1,9 +1,9 @@
 import SwiftUI
 
 /// The causal map (public.app_causal_graph): PCMCI+ discoveries and the strongest effect estimates (lever's day held
-/// equal) as a graph. It opens on the key metrics and what drives them; tap a metric to select it (its links light up
-/// and list below), double-tap to bring in what drives it; pinch and drag to move around. A row opens the metric or
-/// the pair.
+/// equal) as a graph. It opens on the key metrics, or a focused report's metrics, and the metrics within N links of
+/// them (1 to 3, or the whole map); tap a metric to select it (its links light up and list below), double-tap to
+/// bring in what drives it; pinch and drag to move around. A row opens the metric or the pair.
 struct CausalGraph: Decodable {
     struct Node: Decodable, Identifiable, Hashable { let id: Int; let name: String; let domain: String?; let key: Bool? }
     struct Edge: Decodable, Hashable {
@@ -16,13 +16,17 @@ struct CausalGraph: Decodable {
         let size: Double?       // partial correlation (discovery) or effect in SDs (effect)
         let q: Double?
     }
+    struct Report: Decodable, Hashable, Identifiable { let id: Int; let title: String; let metrics: [Int] }
     let nodes: [Node]
     let edges: [Edge]
+    let reports: [Report]?
 }
 
 struct CausalMapView: View {
     @EnvironmentObject var store: Store
     @State private var graph: CausalGraph?
+    @State private var focus: Int?                   // a focused report's metrics at the centre; nil: the key metrics
+    @State private var depth = 1                     // metrics within this many links of them; 0: the whole map
     @State private var error: String?
     @State private var shown: Set<Int> = []          // metrics on the map
     @State private var selected: Int?
@@ -34,13 +38,27 @@ struct CausalMapView: View {
     @State private var pan: CGSize = .zero
     @State private var panBase: CGSize = .zero
 
+    init(report: Int? = nil) { _focus = State(initialValue: report) }
+
     private var nodes: [Int: CausalGraph.Node] { Dictionary(uniqueKeysWithValues: (graph?.nodes ?? []).map { ($0.id, $0) }) }
 
+    private var kindEdges: [CausalGraph.Edge] {
+        (graph?.edges ?? []).filter { $0.method == "effect" ? showEffects : showDiscovery }
+    }
+
     private var visibleEdges: [CausalGraph.Edge] {
-        (graph?.edges ?? []).filter { e in
-            shown.contains(e.source) && shown.contains(e.target)
-                && (e.method == "effect" ? showEffects : showDiscovery)
-        }
+        kindEdges.filter { shown.contains($0.source) && shown.contains($0.target) }
+    }
+
+    /// The metrics the map centres on: the report's, else the key metrics.
+    private var seeds: Set<Int> {
+        guard let g = graph else { return [] }
+        if let f = focus, let r = g.reports?.first(where: { $0.id == f }) { return Set(r.metrics) }
+        return Set(g.nodes.filter { $0.key == true }.map(\.id))
+    }
+
+    private var focusTitle: String {
+        focus.flatMap { f in graph?.reports?.first { $0.id == f }?.title } ?? "Key metrics"
     }
 
     var body: some View {
@@ -50,13 +68,30 @@ struct CausalMapView: View {
                      + "thin: effect estimates holding other factors equal. Blue raises, orange lowers. "
                      + "Tap a metric to see its links, double-tap to add what drives it; pinch and drag to move.") {
                     HStack {
+                        Menu {
+                            Button("Key metrics") { focus = nil }
+                            ForEach(graph?.reports ?? []) { r in Button(r.title) { focus = r.id } }
+                        } label: {
+                            Label(focusTitle, systemImage: "scope").lineLimit(1)
+                        }
+                        Spacer()
+                        Picker("Links", selection: $depth) {
+                            Text("1").tag(1); Text("2").tag(2); Text("3").tag(3); Text("All").tag(0)
+                        }
+                        .pickerStyle(.segmented).frame(width: 150)
+                    }
+                    .font(.system(size: 13))
+                    HStack {
                         Toggle("Effects", isOn: $showEffects).toggleStyle(.button)
                         Toggle("Discovery", isOn: $showDiscovery).toggleStyle(.button)
                         Spacer()
-                        Button("Key metrics") { reset() }.font(.system(size: 13))
+                        Button("Reset") { reset() }.font(.system(size: 13))
                     }
                     .font(.system(size: 13))
                     .padding(.bottom, 6)
+                    Muted(text: depth == 0 ? "\(focusTitle) (large dots) on the whole map."
+                          : "\(focusTitle) (large dots) and the metrics within \(depth) link\(depth == 1 ? "" : "s") of them.")
+                        .font(.system(size: 12))
                     if let graph, !graph.edges.isEmpty {
                         canvas.frame(height: 460).clipShape(RoundedRectangle(cornerRadius: 8))
                             .overlay(RoundedRectangle(cornerRadius: 8).stroke(Theme.line))
@@ -75,6 +110,10 @@ struct CausalMapView: View {
         .navigationTitle("Causal map")
         .navigationBarTitleDisplayMode(.inline)
         .task { await load() }
+        .onChange(of: focus) { reset() }
+        .onChange(of: depth) { reset() }
+        .onChange(of: showEffects) { reset() }
+        .onChange(of: showDiscovery) { reset() }
     }
 
     // MARK: drawing
@@ -149,7 +188,7 @@ struct CausalMapView: View {
 
     private func drawNode(_ id: Int, ctx: inout GraphicsContext, size: CGSize) {
         guard let p = screen(id, size), let n = nodes[id] else { return }
-        let key = n.key == true, sel = selected == id
+        let key = seeds.contains(id), sel = selected == id
         let linked = selected.map { s in visibleEdges.contains { ($0.source == s && $0.target == id) || ($0.target == s && $0.source == id) } } ?? false
         let r: CGFloat = key ? 10 : 6
         let dim = selected != nil && !sel && !linked
@@ -203,12 +242,22 @@ struct CausalMapView: View {
         }
     }
 
-    /// The key metrics, what drives them, and every discovery link.
+    /// The centre metrics (seeds) and every metric within `depth` links of them, either direction, over the links
+    /// shown (effects / discovery); depth 0: every metric.
     private func reset() {
-        guard let g = graph else { return }
-        let keys = Set(g.nodes.filter { $0.key == true }.map(\.id))
-        var s = keys
-        for e in g.edges where e.method == "discovery" || keys.contains(e.target) { s.insert(e.source); s.insert(e.target) }
+        guard graph != nil else { return }
+        var s = seeds
+        if depth == 0 {
+            for e in kindEdges { s.insert(e.source); s.insert(e.target) }
+        } else {
+            var next: [Int: Set<Int>] = [:]
+            for e in kindEdges { next[e.source, default: []].insert(e.target); next[e.target, default: []].insert(e.source) }
+            var frontier = s
+            for _ in 0..<depth {
+                frontier = Set(frontier.flatMap { next[$0] ?? [] }).subtracting(s)
+                s.formUnion(frontier)
+            }
+        }
         shown = s
         selected = nil
         zoom = 1; zoomBase = 1; pan = .zero; panBase = .zero

@@ -43,7 +43,7 @@ struct ReportView: View {
                         case .browse: BrowseView(r: r)
                         case let .entity(g): EntityView(r: r, g: g)
                         case let .focus(f): FocusReportView(r: r, focus: f)
-                        case .causal: CausalMapView()
+                        case let .causal(f): CausalMapView(report: f)
                         }
                     }
                 }
@@ -120,7 +120,7 @@ struct ReportHome: View {
                     }
                 }
                 Card(title: "Explore") {
-                    CardRow(route: .causal) {
+                    CardRow(route: .causal(nil)) {
                         Text("Causal map: what moves what, interactive").font(.system(size: 14)).foregroundStyle(Theme.text)
                     }
                     CardRow(route: .browse) {

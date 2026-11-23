@@ -394,7 +394,7 @@ enum Route: Hashable {
     case browse
     case entity(CatalogGroup)
     case focus(FocusReport)
-    case causal
+    case causal(Int?)   // a focused report's map, nil: the key metrics'
 
     init?(url: URL) {
         guard url.scheme == "pdb" else { return nil }
