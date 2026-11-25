@@ -2,7 +2,9 @@ import SwiftUI
 
 /// The causal map (public.app_causal_graph): PCMCI+ discoveries and the strongest effect estimates (lever's day held
 /// equal) as a graph. It opens on the key metrics, or a focused report's metrics, and the metrics within N links of
-/// them (1 to 3, or the whole map), links at least `minStrength` strong; tap a metric to select it (its links light up
+/// them (1 to 3, or the whole map), links at least `minStrength` strong (set automatically for each view: the lowest
+/// strength that keeps it readable, at most `maxLinks` links and `maxAdded` metrics besides the centre ones; the slider
+/// overrides it until the view changes); tap a metric to select it (its links light up
 /// and list below), double-tap to bring in what drives it; pinch and drag to move around. A row opens the metric or the
 /// pair.
 struct CausalGraph: Decodable {
@@ -34,6 +36,14 @@ struct CausalMapView: View {
     @State private var showEffects = true
     @State private var showDiscovery = true
     @State private var minStrength = 0.0             // links weaker than this (|partial r| or |SD|) are left out
+    @State private var autoStrength = true           // minStrength picked for the view (false once the slider moves)
+    private let maxLinks = 30
+    private let maxAdded = 14
+
+    /// The slider's top: the strongest link, rounded up to 0.1 (effects can pass 1 SD).
+    private var topStrength: Double {
+        (max(0.6, (graph?.edges ?? []).map { abs($0.size ?? 0) }.max() ?? 0.6) * 10).rounded(.up) / 10
+    }
     @State private var pos: [Int: CGPoint] = [:]     // layout, unit square
     @State private var zoom: CGFloat = 1
     @State private var zoomBase: CGFloat = 1
@@ -44,8 +54,10 @@ struct CausalMapView: View {
 
     private var nodes: [Int: CausalGraph.Node] { Dictionary(uniqueKeysWithValues: (graph?.nodes ?? []).map { ($0.id, $0) }) }
 
-    private var kindEdges: [CausalGraph.Edge] {
-        (graph?.edges ?? []).filter { ($0.method == "effect" ? showEffects : showDiscovery) && abs($0.size ?? 0) >= minStrength }
+    private var kindEdges: [CausalGraph.Edge] { edges(atLeast: minStrength) }
+
+    private func edges(atLeast min: Double) -> [CausalGraph.Edge] {
+        (graph?.edges ?? []).filter { ($0.method == "effect" ? showEffects : showDiscovery) && abs($0.size ?? 0) >= min }
     }
 
     private var visibleEdges: [CausalGraph.Edge] {
@@ -96,13 +108,16 @@ struct CausalMapView: View {
                         Toggle("Effects", isOn: $showEffects).toggleStyle(.button)
                         Toggle("Discovery", isOn: $showDiscovery).toggleStyle(.button)
                         Spacer()
-                        Button("Reset") { reset() }.font(.system(size: 13))
+                        Button("Reset") { autoStrength = true; reset() }.font(.system(size: 13))
                     }
                     .font(.system(size: 13))
                     HStack {
                         Text("Min strength").font(.system(size: 12)).foregroundStyle(Theme.muted)
-                        Slider(value: $minStrength, in: 0...0.6, step: 0.05, onEditingChanged: { editing in if !editing { reset() } })
-                        Text(String(format: "%.2f", minStrength)).font(.system(size: 12).monospacedDigit()).frame(width: 34)
+                        Slider(value: $minStrength, in: 0...topStrength, step: 0.05, onEditingChanged: { editing in
+                            if !editing { autoStrength = false; reset(pick: false) }
+                        })
+                        Text(String(format: "%.2f", minStrength) + (autoStrength ? " auto" : ""))
+                            .font(.system(size: 12).monospacedDigit()).frame(width: autoStrength ? 64 : 34, alignment: .trailing)
                     }
                     .padding(.bottom, 6)
                     Muted(text: (depth == 0 ? "\(focusTitle) on the whole map."
@@ -127,7 +142,7 @@ struct CausalMapView: View {
         .navigationTitle("Causal map")
         .navigationBarTitleDisplayMode(.inline)
         .task { await load() }
-        .onChange(of: focus) { reset() }
+        .onChange(of: focus) { autoStrength = true; reset() }
         .onChange(of: depth) { reset() }
         .onChange(of: showEffects) { reset() }
         .onChange(of: showDiscovery) { reset() }
@@ -259,26 +274,42 @@ struct CausalMapView: View {
         }
     }
 
-    /// The centre metrics (seeds) and every metric within `depth` links of them, either direction, over the links
-    /// shown (effects / discovery); depth 0: every metric.
-    private func reset() {
+    /// Shows the centre metrics (seeds) and every metric within `depth` links of them, either direction, over the
+    /// links shown (effects / discovery) at least `minStrength` strong; depth 0: every metric.
+    /// `pick`: while the strength is automatic, first the lowest one (by 0.05) whose map has at most `maxLinks` links
+    /// and `maxAdded` metrics besides the centre ones, so each view (key metrics, a report, 1 to 3 links or all) opens
+    /// with as many links as stay readable (2026-11-24: key metrics about 1.0, Sleep 0.75, Nutrition 0.3, Hygiene 0).
+    private func reset(pick: Bool = true) {
         guard graph != nil else { return }
+        if pick && autoStrength {
+            let centre = seeds
+            minStrength = stride(from: 0.0, through: topStrength, by: 0.05).first { t in
+                let (s, n) = reach(atLeast: t)
+                return n <= maxLinks && s.subtracting(centre).count <= maxAdded
+            } ?? topStrength
+        }
+        shown = reach(atLeast: minStrength).0
+        selected = nil
+        zoom = 1; zoomBase = 1; pan = .zero; panBase = .zero
+        layout(fresh: true)
+    }
+
+    /// The metrics within `depth` links of the seeds over the links at least `min` strong, and how many links join them.
+    private func reach(atLeast min: Double) -> (Set<Int>, Int) {
+        let es = edges(atLeast: min)
         var s = seeds
         if depth == 0 {
-            for e in kindEdges { s.insert(e.source); s.insert(e.target) }
+            for e in es { s.insert(e.source); s.insert(e.target) }
         } else {
             var next: [Int: Set<Int>] = [:]
-            for e in kindEdges { next[e.source, default: []].insert(e.target); next[e.target, default: []].insert(e.source) }
+            for e in es { next[e.source, default: []].insert(e.target); next[e.target, default: []].insert(e.source) }
             var frontier = s
             for _ in 0..<depth {
                 frontier = Set(frontier.flatMap { next[$0] ?? [] }).subtracting(s)
                 s.formUnion(frontier)
             }
         }
-        shown = s
-        selected = nil
-        zoom = 1; zoomBase = 1; pan = .zero; panBase = .zero
-        layout(fresh: true)
+        return (s, es.filter { s.contains($0.source) && s.contains($0.target) }.count)
     }
 
     /// Adds what drives a metric (its incoming effect links).

@@ -86,7 +86,7 @@ struct AskAIView: View {
                     .disabled(sending || (text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty && image == nil))
                 } footer: {
                     Text(kind == "food"
-                         ? "Claude finds the nutrition facts online and adds the foods to the right category, with the water a drink holds (to Apple Health). A photo of the food or its label works too, with or without words. It can also make combos (\"split a Red Bull and a coconut water\") and delete recipes you name. Takes about a minute."
+                         ? "Claude finds the nutrition facts online and adds the foods to the right category, with the water a drink holds (to Apple Health). A photo of the food or its label works too, with or without words. It can also log what you had (\"mocha at 12pm, 2 Clif bars at 4pm\"), make combos (\"split a Red Bull and a coconut water\") and delete recipes you name. Takes about a minute."
                          : "Claude adds or changes chores, with when, where, how long and what goes first.")
                 }
                 if let error { Text(error).font(.footnote).foregroundStyle(.red) }
