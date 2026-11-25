@@ -29,6 +29,7 @@ struct CausalMapView: View {
     @EnvironmentObject var store: Store
     @State private var graph: CausalGraph?
     @State private var focus: Int?                   // a focused report's metrics at the centre; nil: the key metrics
+    @State private var depthChoice = -1              // the Links picker: -1 auto, 1 to 3, 0 the whole map
     @State private var depth = 1                     // metrics within this many links of them; 0: the whole map
     @State private var error: String?
     @State private var shown: Set<Int> = []          // metrics on the map
@@ -98,10 +99,10 @@ struct CausalMapView: View {
                             Label(focusTitle, systemImage: "scope").lineLimit(1)
                         }
                         Spacer()
-                        Picker("Links", selection: $depth) {
-                            Text("1").tag(1); Text("2").tag(2); Text("3").tag(3); Text("All").tag(0)
+                        Picker("Links", selection: $depthChoice) {
+                            Text("Auto").tag(-1); Text("1").tag(1); Text("2").tag(2); Text("3").tag(3); Text("All").tag(0)
                         }
-                        .pickerStyle(.segmented).frame(width: 150)
+                        .pickerStyle(.segmented).frame(width: 200)
                     }
                     .font(.system(size: 13))
                     HStack {
@@ -121,7 +122,8 @@ struct CausalMapView: View {
                     }
                     .padding(.bottom, 6)
                     Muted(text: (depth == 0 ? "\(focusTitle) on the whole map."
-                          : "\(focusTitle) and the metrics within \(depth) link\(depth == 1 ? "" : "s") of them.")
+                          : "\(focusTitle) and the metrics within \(depth) link\(depth == 1 ? "" : "s") of them"
+                            + (depthChoice == -1 ? " (picked for this view)." : "."))
                           + (focus == nil ? " Large dots: the key metrics." : " Large dots: the report's outcomes; medium: its area metrics."))
                         .font(.system(size: 12))
                     if let graph, !graph.edges.isEmpty {
@@ -143,7 +145,7 @@ struct CausalMapView: View {
         .navigationBarTitleDisplayMode(.inline)
         .task { await load() }
         .onChange(of: focus) { autoStrength = true; reset() }
-        .onChange(of: depth) { reset() }
+        .onChange(of: depthChoice) { reset() }
         .onChange(of: showEffects) { reset() }
         .onChange(of: showDiscovery) { reset() }
     }
@@ -283,23 +285,48 @@ struct CausalMapView: View {
     /// `pick`: while the strength is automatic, first the lowest one (by 0.05) whose map has at most `maxLinks` links
     /// and `maxAdded` metrics besides the centre ones, so each view (key metrics, a report, 1 to 3 links or all) opens
     /// with as many links as stay readable (2026-11-24: key metrics about 1.0, Sleep 0.75, Nutrition 0.3, Hygiene 0).
+    /// Links on Auto: from 1 link out, one more while that needs at most 0.1 more strength and shows at least as many
+    /// links (2026-11-25: key metrics 2, Medical 3, Hygiene 3, Productivity 2, Sleep / Nutrition 1); with the strength
+    /// set by hand, the deepest of 1 to 3 that stays readable at it.
     private func reset(pick: Bool = true) {
         guard graph != nil else { return }
-        if pick && autoStrength {
+        if depthChoice != -1 {
+            depth = depthChoice
+            if pick && autoStrength { minStrength = readable(depth).0 }
+        } else if pick && autoStrength {
+            var best = (d: 1, r: readable(1))
+            for d in 2...3 {
+                let r = readable(d)
+                guard r.0 <= best.r.0 + 0.1 + 1e-9, r.1 >= best.r.1 else { break }
+                best = (d, r)
+            }
+            depth = best.d
+            minStrength = best.r.0
+        } else {
             let centre = seeds
-            minStrength = stride(from: 0.0, through: topStrength, by: 0.05).first { t in
-                let (s, n) = reach(atLeast: t)
+            depth = [3, 2, 1].first { d in
+                let (s, n) = reach(atLeast: minStrength, depth: d)
                 return n <= maxLinks && s.subtracting(centre).count <= maxAdded
-            } ?? topStrength
+            } ?? 1
         }
-        shown = reach(atLeast: minStrength).0
+        shown = reach(atLeast: minStrength, depth: depth).0
         selected = nil
         zoom = 1; zoomBase = 1; pan = .zero; panBase = .zero
         layout(fresh: true)
     }
 
+    /// The lowest strength (by 0.05) at which `d` links out stays readable, and how many links that shows.
+    private func readable(_ d: Int) -> (Double, Int) {
+        let centre = seeds
+        for t in stride(from: 0.0, through: topStrength, by: 0.05) {
+            let (s, n) = reach(atLeast: t, depth: d)
+            if n <= maxLinks && s.subtracting(centre).count <= maxAdded { return (t, n) }
+        }
+        return (topStrength, reach(atLeast: topStrength, depth: d).1)
+    }
+
     /// The metrics within `depth` links of the seeds over the links at least `min` strong, and how many links join them.
-    private func reach(atLeast min: Double) -> (Set<Int>, Int) {
+    private func reach(atLeast min: Double, depth: Int) -> (Set<Int>, Int) {
         let es = edges(atLeast: min)
         var s = seeds
         if depth == 0 {
