@@ -151,7 +151,11 @@ struct CausalMapView: View {
     // MARK: drawing
 
     private var canvas: some View {
-        GeometryReader { geo in
+        // read here, in the body, so a new layout redraws the map: the Canvas and GeometryReader closures run later,
+        // outside the body, and SwiftUI doesn't track what they read (the first layout after loading wasn't drawn until
+        // a toggle redrew the view)
+        let _ = (pos, shown, zoom, pan, selected)
+        return GeometryReader { geo in
             let size = geo.size
             Canvas { ctx, _ in
                 for e in visibleEdges { drawEdge(e, ctx: &ctx, size: size) }
