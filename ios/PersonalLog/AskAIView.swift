@@ -25,13 +25,14 @@ struct AITask: Identifiable, Hashable {
 }
 
 /// Ask the AI (Claude on the PC, scripts/ai_tasks_worker.py) to add a food (it looks the nutrition facts up on the
-/// web and files it in a category) or to add / change chores (with their schedule and dependencies). The recent
+/// web and files it in a category), to add / change chores (with their schedule and dependencies) and check them off,
+/// or to log the Log tab's events ("naproxen at 9am, TV 8 to 10pm") and fix the ones logged wrong. The recent
 /// requests show below, refreshed every few seconds while one is in progress; `onDone` reloads the tab when one
 /// finishes.
 struct AskAIView: View {
     @EnvironmentObject var store: Store
     @Environment(\.dismiss) private var dismiss
-    let kind: String   // food | chore
+    let kind: String   // food | chore | event
     var onDone: () async -> Void = {}
     @State private var text = ""
     @State private var tasks: [AITask] = []
@@ -44,8 +45,11 @@ struct AskAIView: View {
     @FocusState private var focused: Bool
 
     private var placeholder: String {
-        kind == "food" ? "e.g. Trader Joe's mandarin orange chicken, 1 cup"
-                       : "e.g. Laundry every Sunday afternoon, shower only after garbage"
+        switch kind {
+        case "food": return "e.g. Trader Joe's mandarin orange chicken, 1 cup"
+        case "event": return "e.g. Naproxen at 9am, 5 g creatine, TV 8 to 10pm"
+        default: return "e.g. Laundry every Sunday afternoon, shower only after garbage"
+        }
     }
 
     var body: some View {
@@ -87,7 +91,9 @@ struct AskAIView: View {
                 } footer: {
                     Text(kind == "food"
                          ? "Claude finds the nutrition facts online and adds the foods to the right category, with the water a drink holds (to Apple Health). A photo of the food or its label works too, with or without words. It can also log what you had (\"mocha at 12pm, 2 Clif bars at 4pm\"), make combos (\"split a Red Bull and a coconut water\") and delete recipes you name. Takes about a minute."
-                         : "Claude adds or changes chores, with when, where, how long and what goes first.")
+                         : kind == "event"
+                         ? "Claude logs what you tell it with the Log tab's buttons: things taken, amounts, symptoms, the kind of day, and sessions (\"TV 8 to 10pm\", \"started work at 9\", \"stopped gaming\"). It fixes ones logged wrong too (\"the naproxen was at 8, not 9\", \"I didn't have creatine today\")."
+                         : "Claude adds or changes chores, with when, where, how long and what goes first. It checks chores off too (\"took out the garbage at 3pm\") and takes back ones checked off by mistake.")
                 }
                 if let error { Text(error).font(.footnote).foregroundStyle(.red) }
                 if !tasks.isEmpty {
@@ -112,7 +118,7 @@ struct AskAIView: View {
                     }
                 }
             }
-            .navigationTitle(kind == "food" ? "Foods" : "Add chores")
+            .navigationTitle(kind == "food" ? "Foods" : kind == "event" ? "Log with AI" : "Chores")
             .navigationBarTitleDisplayMode(.inline)
             .toolbar { ToolbarItem(placement: .confirmationAction) { Button("Done") { dismiss() } } }
             .task { await poll() }

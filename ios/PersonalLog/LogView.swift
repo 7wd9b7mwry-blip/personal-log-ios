@@ -6,6 +6,7 @@ import SwiftUI
 struct LogView: View {
     @EnvironmentObject var store: Store
     @State private var amountFor: ButtonSpec?
+    @State private var askAI = false
 
     var body: some View {
         NavigationStack {
@@ -55,12 +56,16 @@ struct LogView: View {
                 .navigationBarTitleDisplayMode(.inline)
             }
             .toolbar {
+                ToolbarItem(placement: .topBarLeading) {
+                    Button { askAI = true } label: { Image(systemName: "sparkles") }
+                }
                 ToolbarItem(placement: .topBarTrailing) {
                     NavigationLink { RecentView() } label: { Label("History", systemImage: "clock.arrow.circlepath").labelStyle(.titleAndIcon) }
                 }
             }
         }
         .sheet(item: $amountFor) { b in AmountSheet(button: b) }
+        .sheet(isPresented: $askAI) { AskAIView(kind: "event") { await store.refresh() } }
     }
 
     /// What's running in the group, else the last thing logged in it today.

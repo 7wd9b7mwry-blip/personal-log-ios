@@ -12,6 +12,7 @@ struct RecentView: View {
     @State private var data: EventDay?
     @State private var editing: LoggedEvent?
     @State private var adding = false
+    @State private var askAI = false
     @State private var error: String?
     @State private var search = ""
     @AppStorage("historyAll") private var all = false
@@ -90,11 +91,15 @@ struct RecentView: View {
         .navigationBarTitleDisplayMode(.inline)
         .toolbar {
             ToolbarItem(placement: .topBarTrailing) {
+                Button { askAI = true } label: { Image(systemName: "sparkles") }
+            }
+            ToolbarItem(placement: .topBarTrailing) {
                 Button { adding = true } label: { Image(systemName: "plus") }
             }
         }
         .sheet(item: $editing, onDismiss: { Task { await reload() } }) { e in EventEditView(event: e) }
         .sheet(isPresented: $adding, onDismiss: { Task { await reload() } }) { EventAddView(day: day) }
+        .sheet(isPresented: $askAI, onDismiss: { Task { await reload() } }) { AskAIView(kind: "event") { await reload() } }
         .refreshable { await reload() }
         .task(id: LogDay.key(day) + (all ? "|all" : "|mine")) { await reload() }
     }
