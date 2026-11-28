@@ -52,8 +52,7 @@ struct RootView: View {
         TabView {
             LogView().tabItem { Label("Log", systemImage: "square.grid.2x2") }
             ChoresView().tabItem { Label("Chores", systemImage: "checklist") }
-            FoodView().tabItem { Label("Food", systemImage: "fork.knife") }
-            WatchedView().tabItem { Label("Watched", systemImage: "film") }
+            WatchedView().tabItem { Label("Media", systemImage: "play.tv") }   // Food is a category of Log
             ReportView().tabItem { Label("Report", systemImage: "chart.xyaxis.line") }
             FindView().tabItem { Label("Find", systemImage: "magnifyingglass") }
             IssuesView().tabItem { Label("Issues", systemImage: "ladybug") }

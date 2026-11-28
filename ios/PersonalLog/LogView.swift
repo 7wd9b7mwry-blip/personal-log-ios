@@ -1,6 +1,7 @@
 import SwiftUI
 
-/// The button groups of the server's `app` setting as a menu (tap one for its buttons), with the sessions running now
+/// The button groups of the server's `app` setting as a menu (tap one for its buttons), Food first (the recipes
+/// screen), with the sessions running now
 /// on top so they can be stopped in one tap. A session button shows how long it has been running; the others when
 /// they were last logged.
 struct LogView: View {
@@ -22,6 +23,10 @@ struct LogView: View {
                         }
                     }
                     Section {
+                        // Food is one of the categories (its own screen, MacroFactor recipes), not a tab
+                        NavigationLink { FoodView(embedded: true) } label: {
+                            Label("Food", systemImage: "fork.knife")
+                        }
                         ForEach(store.config.groups) { g in
                             NavigationLink(value: g) {
                                 LabeledContent {

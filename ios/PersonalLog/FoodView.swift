@@ -9,95 +9,102 @@ struct FoodView: View {
     @State private var askAI = false
     @State private var openMore: Set<String> = []
 
+    var embedded = false   // a category of the Log tab (pushed there), not a tab of its own
+
     struct Choice: Identifiable { let name: String; var id: String { name } }
     struct Subgroup: Hashable { let category: String; let name: String? }   // nil: the recipes in none
 
     var body: some View {
-        NavigationStack {
-            VStack(spacing: 0) {
-                TimeBar()
-                StatusLine()
-                List {
-                    if search.isEmpty {
-                        Section { NavigationLink { FoodTodayView() } label: { FoodTodayRow() } }
-                        // categories first; tap one for its recipes
-                        ForEach(store.recipes.sections(matching: ""), id: \.0) { category, names in
-                            NavigationLink(value: category) {
-                                LabeledContent {
-                                    Text("\(names.count)")
-                                } label: {
-                                    Label(category, systemImage: Self.icon(category))
-                                }
-                            }
-                        }
-                    } else {
-                        ForEach(store.recipes.sections(matching: search), id: \.0) { category, names in
-                            Section(category) { ForEach(names, id: \.self) { row($0) } }
-                        }
-                    }
-                }
-                .refreshable { await store.refresh(); await store.flushFood(); await store.loadFoodDay() }
-                .task { await store.loadFoodDay() }
-                .overlay {
-                    if store.recipes.names.isEmpty {
-                        ContentUnavailableView("No recipes", systemImage: "fork.knife",
-                                               description: Text("Add them in macrofactor.recipe, then pull to refresh."))
-                    }
-                }
-            }
-            .searchable(text: $search)
-            .toolbar {
-                ToolbarItem(placement: .topBarTrailing) {
-                    Button { askAI = true } label: { Image(systemName: "sparkles") }
-                }
-            }
-            .navigationTitle("Food")
-            .navigationBarTitleDisplayMode(.inline)
-            .navigationDestination(for: String.self) { category in
-                VStack(spacing: 0) {
-                    TimeBar()
-                    List {
-                        let names = store.recipes.sections(matching: "").first { $0.0 == category }?.1 ?? []
-                        let groups = store.recipes.groups(names)
-                        let split = store.recipes.usual(names)
-                        let usual = split.0, rest = split.1
-                        // the usual few first; everything else (by subgroup when there are some) under More
-                        ForEach(usual, id: \.self) { row($0) }
-                        if groups.count <= 1 {
-                            more(rest, all: usual.isEmpty)
-                        } else {
-                            Section {
-                                DisclosureGroup(isExpanded: expanded(category, all: usual.isEmpty)) {
-                                    ForEach(groups, id: \.0) { sub, ns in
-                                        NavigationLink(value: Subgroup(category: category, name: sub)) {
-                                            LabeledContent { Text("\(ns.count)") } label: { Text(sub ?? "Other") }
-                                        }
-                                    }
-                                } label: { Text("More").foregroundStyle(.secondary) }
-                            }
-                        }
-                    }
-                }
-                .navigationTitle(category)
-                .navigationBarTitleDisplayMode(.inline)
-            }
-            .navigationDestination(for: Subgroup.self) { g in
-                VStack(spacing: 0) {
-                    TimeBar()
-                    List {
-                        let names = store.recipes.sections(matching: "").first { $0.0 == g.category }?.1 ?? []
-                        let split = store.recipes.usual(store.recipes.groups(names).first { $0.0 == g.name }?.1 ?? [])
-                        let usual = split.0, rest = split.1
-                        ForEach(usual, id: \.self) { row($0) }
-                        more(rest, all: usual.isEmpty)
-                    }
-                }
-                .navigationTitle(g.name ?? "Other")
-                .navigationBarTitleDisplayMode(.inline)
-            }
+        Group {
+            if embedded { content } else { NavigationStack { content } }
         }
         .sheet(item: $chosen) { c in RecipeSheet(name: c.name) }
         .sheet(isPresented: $askAI) { AskAIView(kind: "food") { await store.refresh() } }
+    }
+
+    /// The food screen; inside Log (embedded) it rides Log's navigation, on its own it has its own.
+    @ViewBuilder private var content: some View {
+        VStack(spacing: 0) {
+            TimeBar()
+            StatusLine()
+            List {
+                if search.isEmpty {
+                    Section { NavigationLink { FoodTodayView() } label: { FoodTodayRow() } }
+                    // categories first; tap one for its recipes
+                    ForEach(store.recipes.sections(matching: ""), id: \.0) { category, names in
+                        NavigationLink(value: category) {
+                            LabeledContent {
+                                Text("\(names.count)")
+                            } label: {
+                                Label(category, systemImage: Self.icon(category))
+                            }
+                        }
+                    }
+                } else {
+                    ForEach(store.recipes.sections(matching: search), id: \.0) { category, names in
+                        Section(category) { ForEach(names, id: \.self) { row($0) } }
+                    }
+                }
+            }
+            .refreshable { await store.refresh(); await store.flushFood(); await store.loadFoodDay() }
+            .task { await store.loadFoodDay() }
+            .overlay {
+                if store.recipes.names.isEmpty {
+                    ContentUnavailableView("No recipes", systemImage: "fork.knife",
+                                           description: Text("Add them in macrofactor.recipe, then pull to refresh."))
+                }
+            }
+        }
+        .searchable(text: $search)
+        .toolbar {
+            ToolbarItem(placement: .topBarTrailing) {
+                Button { askAI = true } label: { Image(systemName: "sparkles") }
+            }
+        }
+        .navigationTitle("Food")
+        .navigationBarTitleDisplayMode(.inline)
+        .navigationDestination(for: String.self) { category in
+            VStack(spacing: 0) {
+                TimeBar()
+                List {
+                    let names = store.recipes.sections(matching: "").first { $0.0 == category }?.1 ?? []
+                    let groups = store.recipes.groups(names)
+                    let split = store.recipes.usual(names)
+                    let usual = split.0, rest = split.1
+                    // the usual few first; everything else (by subgroup when there are some) under More
+                    ForEach(usual, id: \.self) { row($0) }
+                    if groups.count <= 1 {
+                        more(rest, all: usual.isEmpty)
+                    } else {
+                        Section {
+                            DisclosureGroup(isExpanded: expanded(category, all: usual.isEmpty)) {
+                                ForEach(groups, id: \.0) { sub, ns in
+                                    NavigationLink(value: Subgroup(category: category, name: sub)) {
+                                        LabeledContent { Text("\(ns.count)") } label: { Text(sub ?? "Other") }
+                                    }
+                                }
+                            } label: { Text("More").foregroundStyle(.secondary) }
+                        }
+                    }
+                }
+            }
+            .navigationTitle(category)
+            .navigationBarTitleDisplayMode(.inline)
+        }
+        .navigationDestination(for: Subgroup.self) { g in
+            VStack(spacing: 0) {
+                TimeBar()
+                List {
+                    let names = store.recipes.sections(matching: "").first { $0.0 == g.category }?.1 ?? []
+                    let split = store.recipes.usual(store.recipes.groups(names).first { $0.0 == g.name }?.1 ?? [])
+                    let usual = split.0, rest = split.1
+                    ForEach(usual, id: \.self) { row($0) }
+                    more(rest, all: usual.isEmpty)
+                }
+            }
+            .navigationTitle(g.name ?? "Other")
+            .navigationBarTitleDisplayMode(.inline)
+        }
     }
 
     /// The recipes not used lately, folded under More (open when nothing was used lately).

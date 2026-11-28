@@ -135,7 +135,7 @@ struct WatchedView: View {
                 looking = nil   // one sheet at a time: the rating sheet once this one is gone
                 DispatchQueue.main.asyncAfter(deadline: .now() + 0.6) { rating = t }
             }) }
-            .navigationTitle("Watched")
+            .navigationTitle("Media")
             .navigationBarTitleDisplayMode(.inline)
             .refreshable { await load() }
             .task { await load() }
