@@ -3,13 +3,18 @@ import SwiftUI
 /// What I watched on Stremio, to rate (public.app_watched / app_rate): movies seen most of the way and shows paused two
 /// weeks come up to rate (0-100, Criticker's scale), shows still going can be rated early. A rating goes to Trakt
 /// from the PC (scripts/trakt_worker.py; its first connection code shows here) and to Criticker by one tap (it has no
-/// API). "For you": the similar-users model's predictions (analysis/movie_taste.py), filtered by genre.
+/// API). "For you": live recommendation lists in their own order (Couchmoney's lists on my Trakt account, Trakt's own
+/// recommendations, Steam's More like this for games), with IMDb / Rotten Tomatoes / Steam review % and the effect on
+/// me. Search (Stremio's catalog, Steam's store search) shows where any title sits in those lists, and rates it.
 struct WatchedView: View {
     @EnvironmentObject var store: Store
     @State private var data: [String: Any] = [:]
     @State private var section = 0
     @State private var rating: Title?
-    @State private var genre = "All"
+    @State private var listIndex = 0
+    @State private var query = ""
+    @State private var results: [Title] = []
+    @State private var looking: Title?
     @State private var error: String?
 
     struct Title: Identifiable {
@@ -25,6 +30,13 @@ struct WatchedView: View {
         let predicted: Int?
         let neighbours: Int?
         let genres: [String]
+        let rank: Int?
+        let why: String?
+        let imdbRating: Double?
+        let rtCritics: Int?
+        let rtAudience: Int?
+        let reviewPct: Double?
+        let effect: Double?
         let hours: Double?
         let progress: Double?
         let lastWatched: String?
@@ -42,13 +54,32 @@ struct WatchedView: View {
             predicted = j["predicted"] as? Int
             neighbours = j["neighbours"] as? Int
             genres = j["genres"] as? [String] ?? []
+            rank = j["rank"] as? Int
+            why = j["why"] as? String
+            imdbRating = (j["imdb_rating"] as? NSNumber)?.doubleValue ?? Double(j["imdbRating"] as? String ?? "")
+            rtCritics = j["rt_critics"] as? Int
+            rtAudience = j["rt_audience"] as? Int
+            reviewPct = (j["review_pct"] as? NSNumber)?.doubleValue
+            effect = (j["effect"] as? NSNumber)?.doubleValue
             hours = (j["hours"] as? NSNumber)?.doubleValue
             progress = (j["progress"] as? NSNumber)?.doubleValue
             lastWatched = j["last_watched"] as? String
         }
 
+        var isGame: Bool { kind == "game" }
+
         var subtitle: String {
-            [kind == "series" ? "Show" : "Movie", year].compactMap { $0 }.joined(separator: " · ")
+            [kind == "series" ? "Show" : isGame ? "Game" : "Movie", year].compactMap { $0 }.joined(separator: " · ")
+        }
+
+        /// What people think, in one line: IMDb, Rotten Tomatoes (critics / audience), Steam review %, effect on me.
+        var scores: String {
+            var s: [String] = []
+            if let r = imdbRating { s.append(String(format: "IMDb %.1f", r)) }
+            if let c = rtCritics { s.append("RT \(c)%" + (rtAudience.map { " / \($0)%" } ?? "")) }
+            if let p = reviewPct { s.append(String(format: "Steam %.0f%%", p)) }
+            if let e = effect { s.append(String(format: "on me %+.1f", e)) }
+            return s.joined(separator: " · ")
         }
 
         /// Criticker has no API: its page for the title, found by a search (DuckDuckGo's first hit on criticker.com).
@@ -72,12 +103,32 @@ struct WatchedView: View {
                 .pickerStyle(.segmented)
                 .listRowBackground(Color.clear)
                 if let error { Text(error).font(.footnote).foregroundStyle(.red) }
+                if !query.isEmpty && !results.isEmpty {
+                    Section("Search") {
+                        ForEach(results) { t in
+                            Button { looking = t } label: {
+                                VStack(alignment: .leading, spacing: 2) {
+                                    Text(t.name).font(.subheadline.weight(.semibold))
+                                    Text([t.subtitle, t.scores].filter { !$0.isEmpty }.joined(separator: " · "))
+                                        .font(.caption).foregroundStyle(.secondary)
+                                }
+                            }
+                            .buttonStyle(.plain)
+                        }
+                    }
+                }
                 switch section {
                 case 0: toRate
                 case 1: rated
                 default: picks
                 }
             }
+            .searchable(text: $query, prompt: "Any movie, show or game")
+            .onSubmit(of: .search) { Task { await search() } }
+            .sheet(item: $looking) { t in LookupSheet(title: t, rate: {
+                looking = nil   // one sheet at a time: the rating sheet once this one is gone
+                DispatchQueue.main.asyncAfter(deadline: .now() + 0.6) { rating = t }
+            }) }
             .navigationTitle("Watched")
             .navigationBarTitleDisplayMode(.inline)
             .refreshable { await load() }
@@ -135,41 +186,70 @@ struct WatchedView: View {
             }
             .buttonStyle(.plain)
         }
+        Text("Personal Log uses Trakt but is not endorsed or certified by Trakt.")
+            .font(.caption2).foregroundStyle(.secondary).listRowBackground(Color.clear)
     }
 
     @ViewBuilder private var picks: some View {
-        let all = list("picks")
-        let genres = ["All"] + Array(Set(all.flatMap(\.genres))).filter { $0 != "(no genres listed)" }.sorted()
-        let shown = genre == "All" ? all : all.filter { $0.genres.contains(genre) }
-        let taste = data["taste"] as? [String: Any]
-        if all.isEmpty {
-            Muted(text: "Predictions come once about 10 movies are rated (the Criticker history import is the quick start).")
+        let lists = data["lists"] as? [[String: Any]] ?? []
+        if lists.isEmpty {
+            Muted(text: "Lists come from Trakt (Couchmoney's lists and Trakt's own picks) and Steam once they've synced.")
         } else {
-            Picker("Genre", selection: $genre) { ForEach(genres, id: \.self) { Text($0).tag($0) } }
+            let i = min(listIndex, lists.count - 1)
+            Picker("List", selection: $listIndex) {
+                ForEach(lists.indices, id: \.self) { k in Text(lists[k]["label"] as? String ?? "?").tag(k) }
+            }
             Section {
-                ForEach(shown) { t in
-                    HStack {
-                        VStack(alignment: .leading, spacing: 2) {
-                            Text(t.name).font(.subheadline.weight(.semibold))
-                            Text(([t.year].compactMap { $0 } + t.genres.prefix(3)).joined(separator: " · "))
-                                .font(.caption).foregroundStyle(.secondary)
-                        }
-                        Spacer()
-                        VStack(alignment: .trailing, spacing: 2) {
-                            Text("\(t.predicted ?? 0)").font(.title3.monospacedDigit().weight(.semibold))
-                            Text("\(t.neighbours ?? 0) like you").font(.caption2).foregroundStyle(.secondary)
+                ForEach((lists[i]["items"] as? [[String: Any]] ?? []).map(Title.init)) { t in
+                    Button { looking = t } label: {
+                        HStack(alignment: .top) {
+                            Text("\(t.rank ?? 0)").font(.subheadline.monospacedDigit().weight(.semibold))
+                                .frame(width: 30, alignment: .trailing)
+                            VStack(alignment: .leading, spacing: 2) {
+                                Text(t.name).font(.subheadline.weight(.semibold))
+                                Text(([t.year].compactMap { $0 } + t.genres.prefix(3)).joined(separator: " · "))
+                                    .font(.caption).foregroundStyle(.secondary)
+                                if !t.scores.isEmpty { Text(t.scores).font(.caption2).foregroundStyle(.secondary) }
+                                if let w = t.why { Text(w).font(.caption2).foregroundStyle(.tertiary).lineLimit(1) }
+                            }
                         }
                     }
-                    .swipeActions {
-                        Button("Seen it") { rating = t }.tint(.blue)
-                    }
+                    .buttonStyle(.plain)
+                    .swipeActions { Button("Seen it") { rating = t }.tint(.blue) }
                 }
             } footer: {
-                if let cv = taste?["cv"] as? [String: Any], let mae = cv["mae"] {
-                    Text("Predicted from the \(taste?["neighbours"] ?? 0) MovieLens raters closest to your taste. On your own ratings it's off by \(mae) points on average (each film's plain average: \(cv["baseline_mae"] ?? "?")). Swipe a film you've seen to rate it.")
+                Text("In the list's own order. Tap one to see where it sits in every list; swipe one you've seen to rate it.")
+            }
+        }
+    }
+
+    /// Stremio's catalog (movies, shows) and Steam's store search (games), no keys.
+    private func search() async {
+        let q = query.trimmingCharacters(in: .whitespaces)
+        guard !q.isEmpty, let enc = q.addingPercentEncoding(withAllowedCharacters: .urlPathAllowed) else { return }
+        var out: [Title] = []
+        for kind in ["movie", "series"] {
+            if let u = URL(string: "https://v3-cinemeta.strem.io/catalog/\(kind)/top/search=\(enc).json"),
+               let resp = try? await URLSession.shared.data(from: u),
+               let j = try? JSONSerialization.jsonObject(with: resp.0) as? [String: Any] {
+                for m in (j["metas"] as? [[String: Any]] ?? []).prefix(6) {
+                    var x = m
+                    x["imdb"] = m["imdb_id"] ?? m["id"]
+                    x["kind"] = kind
+                    x["year"] = (m["releaseInfo"] as? String).map { String($0.prefix(4)) }
+                    out.append(Title(x))
                 }
             }
         }
+        if let qq = q.addingPercentEncoding(withAllowedCharacters: .urlQueryAllowed),
+           let u = URL(string: "https://store.steampowered.com/api/storesearch/?term=\(qq)&cc=us&l=en"),
+           let resp = try? await URLSession.shared.data(from: u),
+           let j = try? JSONSerialization.jsonObject(with: resp.0) as? [String: Any] {
+            for g in (j["items"] as? [[String: Any]] ?? []).prefix(5) {
+                out.append(Title(["imdb": "steam:\(g["id"] ?? "")", "name": g["name"] ?? "?", "kind": "game"]))
+            }
+        }
+        results = out
     }
 
     private func row(_ t: Title) -> some View {
@@ -217,16 +297,18 @@ struct RateSheet: View {
                             Button("\(v)") { score = Double(v) }.buttonStyle(.bordered)
                         }
                     }
-                } footer: { Text("0-100, Criticker's scale. Trakt gets it as 1-10.") }
+                } footer: { Text(title.isGame ? "0-100. Game ratings steer the game list." : "0-100, Criticker's scale. Trakt gets it as 1-10.") }
                 Section {
                     Button {
                         Task { await save(dismissing: false) }
                     } label: { Label("Save", systemImage: "checkmark") }
-                    Button {
-                        Task {
-                            if await save(dismissing: false), let u = title.critickerURL { openURL(u) }
-                        }
-                    } label: { Label("Save and rate on Criticker", systemImage: "arrow.up.right.square") }
+                    if !title.isGame {
+                        Button {
+                            Task {
+                                if await save(dismissing: false), let u = title.critickerURL { openURL(u) }
+                            }
+                        } label: { Label("Save and rate on Criticker", systemImage: "arrow.up.right.square") }
+                    }
                     Button("Not rating this one") { Task { await save(dismissing: true) } }
                         .foregroundStyle(.secondary)
                     if title.score != nil || title.dismissed {
@@ -266,6 +348,82 @@ struct RateSheet: View {
             dismiss()
         } catch {
             self.error = error.localizedDescription
+        }
+    }
+}
+
+/// One title from a list or the search: where it sits in every list, my rating, what people think, rate it.
+struct LookupSheet: View {
+    @EnvironmentObject var store: Store
+    @Environment(\.dismiss) private var dismiss
+    let title: WatchedView.Title
+    let rate: () -> Void
+    @State private var info: [String: Any] = [:]
+    @State private var meta: [String: Any] = [:]
+    @State private var error: String?
+
+    var body: some View {
+        NavigationStack {
+            List {
+                Section {
+                    Text(title.subtitle).foregroundStyle(.secondary)
+                    if !title.scores.isEmpty { Text(title.scores) }
+                    if title.imdbRating == nil, let r = meta["imdbRating"] as? String, !r.isEmpty { Text("IMDb \(r)") }
+                    if let g = meta["genres"] as? [String], !g.isEmpty { Text(g.joined(separator: " · ")).font(.caption) }
+                    if let d = meta["description"] as? String { Text(d).font(.caption).foregroundStyle(.secondary) }
+                    if let f = info["film"] as? [String: Any], let rt = f["rt_critics"] as? Int {
+                        Text("Rotten Tomatoes \(rt)%" + ((f["rt_audience"] as? Int).map { ", audience \($0)%" } ?? ""))
+                    }
+                    if let g = info["game"] as? [String: Any], let h = (g["playtime_h"] as? NSNumber)?.doubleValue {
+                        Text(String(format: "You've played %.1f h", h))
+                    }
+                }
+                Section("In your lists") {
+                    let ranks = info["ranks"] as? [[String: Any]] ?? []
+                    if ranks.isEmpty {
+                        Text("Not on any list: Couchmoney, Trakt and Steam don't rank it for you.").foregroundStyle(.secondary)
+                    }
+                    ForEach(ranks.indices, id: \.self) { k in
+                        Text("#\(ranks[k]["rank"] as? Int ?? 0) of \(ranks[k]["of"] as? Int ?? 0) in \(label(ranks[k]))")
+                    }
+                }
+                Section {
+                    if let r = info["rating"] as? [String: Any], let s = r["score"] as? Int {
+                        Text("You rated it \(s)")
+                    }
+                    Button { rate() } label: { Label("Rate it", systemImage: "star") }
+                }
+                if let error { Text(error).font(.footnote).foregroundStyle(.red) }
+            }
+            .navigationTitle(title.name)
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar { ToolbarItem(placement: .cancellationAction) { Button("Done") { dismiss() } } }
+            .task { await load() }
+        }
+        .presentationDetents([.medium, .large])
+    }
+
+    private func label(_ r: [String: Any]) -> String {
+        let source = r["source"] as? String ?? "", list = r["list"] as? String ?? ""
+        switch source {
+        case "couchmoney": return list
+        case "trakt": return "Trakt \(list)"
+        default: return list == "upcoming" ? "upcoming games" : "Steam games"
+        }
+    }
+
+    private func load() async {
+        do {
+            let d = try await API(creds: store.creds).rpc("app_title_lookup", json: ["p_imdb": title.id])
+            info = (try JSONSerialization.jsonObject(with: d) as? [String: Any]) ?? [:]
+        } catch {
+            self.error = error.localizedDescription
+        }
+        // what it is (Stremio's catalog, no key), for titles the PC hasn't looked up
+        if !title.isGame, let u = URL(string: "https://v3-cinemeta.strem.io/meta/\(title.kind)/\(title.id).json"),
+           let resp = try? await URLSession.shared.data(from: u),
+           let j = try? JSONSerialization.jsonObject(with: resp.0) as? [String: Any] {
+            meta = j["meta"] as? [String: Any] ?? [:]
         }
     }
 }
