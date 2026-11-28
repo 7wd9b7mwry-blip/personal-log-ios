@@ -13,7 +13,7 @@ struct WatchedView: View {
     @State private var rating: Title?
     @State private var listIndex = 0
     @State private var byPredicted = false
-    @State private var ai: [String: Any] = [:]   // the AI picks (app-insight page "watched")
+    @State private var ai: [String: [String: Any]] = [:]   // the AI picks per For you list (app-insight "watched:<list>")
     @State private var query = ""
     @State private var results: [Title] = []
     @State private var looking: Title?
@@ -197,7 +197,8 @@ struct WatchedView: View {
     }
 
     /// The AI's picks from the ranked lists, made on the PC like the report's pages (once per daily report).
-    @ViewBuilder private var aiPicks: some View {
+    @ViewBuilder private func aiPicks(_ list: String) -> some View {
+        let ai = self.ai[list] ?? [:]
         let picks = ai["picks"] as? [[String: Any]] ?? []
         if !picks.isEmpty {
             Section {
@@ -229,7 +230,6 @@ struct WatchedView: View {
     }
 
     @ViewBuilder private var picks: some View {
-        aiPicks
         let lists = data["lists"] as? [[String: Any]] ?? []
         if lists.isEmpty {
             Muted(text: "Lists come from Trakt (Couchmoney's lists and Trakt's own picks) and Steam once they've synced.")
@@ -238,6 +238,7 @@ struct WatchedView: View {
             Picker("List", selection: $listIndex) {
                 ForEach(lists.indices, id: \.self) { k in Text(lists[k]["label"] as? String ?? "?").tag(k) }
             }
+            aiPicks(lists[i]["list"] as? String ?? "films")
             if lists[i]["combined"] as? Bool != true {
                 Toggle("Sort by my predicted score", isOn: $byPredicted)
             }
@@ -333,10 +334,12 @@ struct WatchedView: View {
         } catch {
             self.error = error.localizedDescription
         }
-        // the AI picks: the stored ones, or asks the PC for them (made once per daily report)
-        if let d = try? await API(creds: store.creds).function("app-insight", json: ["page": "watched"], timeout: 30),
-           let j = try? JSONSerialization.jsonObject(with: d) as? [String: Any] {
-            ai = j
+        // the AI picks for each list: made on the PC after each daily report (asked for here if they're missing)
+        for list in ["films", "shows", "movies", "games"] {
+            if let d = try? await API(creds: store.creds).function("app-insight", json: ["page": "watched", "list": list], timeout: 30),
+               let j = try? JSONSerialization.jsonObject(with: d) as? [String: Any] {
+                ai[list] = j
+            }
         }
     }
 }
