@@ -511,27 +511,37 @@ struct RatingsView: View {
             List {
                 if let error { Text(error).font(.footnote).foregroundStyle(.red) }
                 if titles.isEmpty { Muted(text: "No ratings yet.") }
-                ForEach(titles) { t in
-                    Button { rating = t } label: {
-                        HStack {
-                            VStack(alignment: .leading, spacing: 2) {
-                                Text(t.name).font(.subheadline.weight(.semibold))
-                                Text(t.subtitle).font(.caption).foregroundStyle(.secondary)
-                            }
-                            Spacer()
-                            if t.dismissed {
-                                Text("Skipped").font(.caption).foregroundStyle(.secondary)
-                            } else {
-                                if t.traktError != nil {
-                                    Image(systemName: "exclamationmark.triangle").foregroundStyle(.orange).font(.caption)
-                                } else if t.trakt {
-                                    Image(systemName: "checkmark.circle").foregroundStyle(.green).font(.caption)
+                // by kind, best first; skipped ones at the end of each
+                ForEach(["series", "movie", "game"], id: \.self) { kind in
+                    let label = ["series": "Shows", "movie": "Movies", "game": "Games"][kind] ?? kind
+                    let ts = titles.filter { $0.kind == kind }
+                        .sorted { ($0.dismissed ? -1 : $0.score ?? 0) > ($1.dismissed ? -1 : $1.score ?? 0) }
+                    if !ts.isEmpty {
+                        Section("\(label) (\(ts.filter { !$0.dismissed }.count))") {
+                            ForEach(ts) { t in
+                        Button { rating = t } label: {
+                            HStack {
+                                VStack(alignment: .leading, spacing: 2) {
+                                    Text(t.name).font(.subheadline.weight(.semibold))
+                                    Text(t.subtitle).font(.caption).foregroundStyle(.secondary)
                                 }
-                                Text("\(t.score ?? 0)").font(.title3.monospacedDigit().weight(.semibold))
+                                Spacer()
+                                if t.dismissed {
+                                    Text("Skipped").font(.caption).foregroundStyle(.secondary)
+                                } else {
+                                    if t.traktError != nil {
+                                        Image(systemName: "exclamationmark.triangle").foregroundStyle(.orange).font(.caption)
+                                    } else if t.trakt {
+                                        Image(systemName: "checkmark.circle").foregroundStyle(.green).font(.caption)
+                                    }
+                                    Text("\(t.score ?? 0)").font(.title3.monospacedDigit().weight(.semibold))
+                                }
+                            }
+                        }
+                        .buttonStyle(.plain)
                             }
                         }
                     }
-                    .buttonStyle(.plain)
                 }
                 Text("Personal Log uses Trakt but is not endorsed or certified by Trakt.")
                     .font(.caption2).foregroundStyle(.secondary).listRowBackground(Color.clear)
