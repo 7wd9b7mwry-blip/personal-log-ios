@@ -38,6 +38,8 @@ struct WatchedView: View {
         let rtAudience: Int?
         let reviewPct: Double?
         let effect: Double?
+        let combined: Int?
+        let parts: [String: Int]
         let hours: Double?
         let progress: Double?
         let lastWatched: String?
@@ -62,6 +64,8 @@ struct WatchedView: View {
             rtAudience = j["rt_audience"] as? Int
             reviewPct = (j["review_pct"] as? NSNumber)?.doubleValue
             effect = (j["effect"] as? NSNumber)?.doubleValue
+            combined = (j["combined"] as? NSNumber)?.intValue
+            parts = (j["parts"] as? [String: Any] ?? [:]).compactMapValues { ($0 as? NSNumber)?.intValue }
             hours = (j["hours"] as? NSNumber)?.doubleValue
             progress = (j["progress"] as? NSNumber)?.doubleValue
             lastWatched = j["last_watched"] as? String
@@ -200,7 +204,9 @@ struct WatchedView: View {
             Picker("List", selection: $listIndex) {
                 ForEach(lists.indices, id: \.self) { k in Text(lists[k]["label"] as? String ?? "?").tag(k) }
             }
-            Toggle("Sort by my predicted score", isOn: $byPredicted)
+            if lists[i]["combined"] as? Bool != true {
+                Toggle("Sort by my predicted score", isOn: $byPredicted)
+            }
             Section {
                 let items = (lists[i]["items"] as? [[String: Any]] ?? []).map(Title.init)
                 ForEach(byPredicted ? items.sorted { ($0.predicted ?? -1) > ($1.predicted ?? -1) } : items) { t in
@@ -216,7 +222,12 @@ struct WatchedView: View {
                                 if let w = t.why { Text(w).font(.caption2).foregroundStyle(.tertiary).lineLimit(1) }
                             }
                             Spacer()
-                            if let p = t.predicted {
+                            if let c = t.combined {
+                                VStack(alignment: .trailing, spacing: 0) {
+                                    Text("\(c)").font(.title3.monospacedDigit().weight(.semibold))
+                                    Text("overall").font(.caption2).foregroundStyle(.secondary)
+                                }
+                            } else if let p = t.predicted {
                                 VStack(alignment: .trailing, spacing: 0) {
                                     Text("\(p)").font(.title3.monospacedDigit().weight(.semibold))
                                     Text(t.isGame ? "fit" : "for me").font(.caption2).foregroundStyle(.secondary)
@@ -228,7 +239,11 @@ struct WatchedView: View {
                     .swipeActions { Button("Seen it") { rating = t }.tint(.blue) }
                 }
             } footer: {
-                Text("The number on the left is the list's own rank; on the right, my trait model's predicted score (games: how well it fits what I play most). Tap one to see where it sits in every list; swipe one you've seen to rate it.")
+                if lists[i]["combined"] as? Bool == true {
+                    Text("Overall 0-100: where the lists put it (35%), my trait model (30%), critics and audiences (25%), its effect on me (10%), over the parts each title has. Tap one for the breakdown; swipe one you've seen to rate it.")
+                } else {
+                    Text("The number on the left is the list's own rank; on the right, my trait model's predicted score. Tap one to see where it sits in every list; swipe one you've seen to rate it.")
+                }
             }
         }
     }
@@ -386,6 +401,20 @@ struct LookupSheet: View {
                     }
                     if let g = info["game"] as? [String: Any], let h = (g["playtime_h"] as? NSNumber)?.doubleValue {
                         Text(String(format: "You've played %.1f h", h))
+                    }
+                }
+                if let c = title.combined {
+                    Section {
+                        Text("Overall for you: \(c)").font(.headline)
+                        let names = ["discovery": "Where the lists put it", "model": "My trait model",
+                                     "people": "Critics and audiences", "effect": "Effect on me"]
+                        ForEach(["discovery", "model", "people", "effect"], id: \.self) { k in
+                            HStack {
+                                Text(names[k] ?? k)
+                                Spacer()
+                                Text(title.parts[k].map { "\($0)" } ?? "–").monospacedDigit().foregroundStyle(.secondary)
+                            }
+                        }
                     }
                 }
                 if let p = predicted {
