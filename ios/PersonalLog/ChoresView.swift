@@ -467,7 +467,9 @@ final class Chores: ObservableObject {
 
 /// Today's plan (what's next, in order, with Done / later / tomorrow), a "need N min first" hold, and the next days.
 struct ChoresView: View {
+    @EnvironmentObject var store: Store
     @StateObject private var chores = Chores.shared
+    @State private var mediaToRate = 0   // titles watched / games played and not rated (MediaToRateView)
     @State private var editing: Chore?
     @State private var askAI = false
     @State private var morningSettings = false
@@ -495,6 +497,17 @@ struct ChoresView: View {
                          : "The wake alarm is off.")
                 }
                 holdSection
+                if mediaToRate > 0 {
+                    Section {
+                        NavigationLink { MediaToRateView() } label: {
+                            LabeledContent {
+                                Text("\(mediaToRate)")
+                            } label: {
+                                Label("Media to rate", systemImage: "star.leadinghalf.filled")
+                            }
+                        }
+                    } footer: { Text("What you've watched or played and haven't rated, \(MediaToRateView.batch) at a time.") }
+                }
                 if let today = chores.days.first {
                     Section {
                         if today.items.isEmpty {
@@ -536,7 +549,7 @@ struct ChoresView: View {
                     }
                 }
             }
-            .refreshable { await chores.refresh() }
+            .refreshable { await chores.refresh(); mediaToRate = await MediaToRateView.titles(store).count }
             .navigationTitle("Chores")
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
@@ -553,7 +566,10 @@ struct ChoresView: View {
             .sheet(item: $editing) { c in ChoreEditView(chore: c) }
             .sheet(isPresented: $askAI) { AskAIView(kind: "chore") { await chores.refresh() } }
             .sheet(isPresented: $morningSettings) { MorningSettingsView() }
-            .task { if chores.loadedAt == nil || Date().timeIntervalSince(chores.loadedAt!) > 60 { await chores.refresh() } }
+            .task {
+                if chores.loadedAt == nil || Date().timeIntervalSince(chores.loadedAt!) > 60 { await chores.refresh() }
+                mediaToRate = await MediaToRateView.titles(store).count
+            }
         }
     }
 

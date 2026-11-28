@@ -56,6 +56,7 @@ struct RootView: View {
             ReportView().tabItem { Label("Report", systemImage: "chart.xyaxis.line") }
             FindView().tabItem { Label("Find", systemImage: "magnifyingglass") }
             IssuesView().tabItem { Label("Issues", systemImage: "ladybug") }
+            RatingsView().tabItem { Label("Ratings", systemImage: "star") }   // my movie / show / game ratings
             NavigationStack { SettingsView() }.tabItem { Label("Settings", systemImage: "gearshape") }
         }
     }

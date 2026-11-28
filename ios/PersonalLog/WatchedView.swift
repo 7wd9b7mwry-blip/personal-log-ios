@@ -3,16 +3,14 @@ import SwiftUI
 /// What I watched on Stremio, to rate (public.app_watched / app_rate): movies seen most of the way and shows paused two
 /// weeks come up to rate (0-100, Criticker's scale), shows still going can be rated early. A rating goes to Trakt
 /// from the PC (scripts/trakt_worker.py; its first connection code shows here) and to Criticker by one tap (it has no
-/// API). "For you": live recommendation lists in their own order (Couchmoney's lists on my Trakt account, Trakt's own
+/// API). The tab is For you: the AI's overall picks, then a report per kind (shows, movies, games: their AI picks and
+/// overall ranking); my ratings are under More (RatingsView), titles to rate a chore (MediaToRateView). Live lists (Couchmoney's lists on my Trakt account, Trakt's own
 /// recommendations, Steam's More like this for games), with IMDb / Rotten Tomatoes / Steam review % and the effect on
 /// me. Search (Stremio's catalog, Steam's store search) shows where any title sits in those lists, and rates it.
 struct WatchedView: View {
     @EnvironmentObject var store: Store
     @State private var data: [String: Any] = [:]
-    @State private var section = 0
     @State private var rating: Title?
-    @State private var listIndex = 0
-    @State private var byPredicted = false
     @State private var ai: [String: [String: Any]] = [:]   // the AI picks per For you list (app-insight "watched:<list>")
     @State private var query = ""
     @State private var results: [Title] = []
@@ -101,13 +99,6 @@ struct WatchedView: View {
         NavigationStack {
             List {
                 trakt
-                Picker("", selection: $section) {
-                    Text("To rate").tag(0)
-                    Text("Rated").tag(1)
-                    Text("For you").tag(2)
-                }
-                .pickerStyle(.segmented)
-                .listRowBackground(Color.clear)
                 if let error { Text(error).font(.footnote).foregroundStyle(.red) }
                 if !query.isEmpty && !results.isEmpty {
                     Section("Search") {
@@ -123,12 +114,20 @@ struct WatchedView: View {
                         }
                     }
                 }
-                switch section {
-                case 0: toRate
-                case 1: rated
-                default: picks
+                aiPicks("all", title: "For you")
+                Section("Reports") {
+                    ForEach(lists.indices, id: \.self) { k in
+                        NavigationLink(value: k) {
+                            LabeledContent {
+                                Text("\((lists[k]["items"] as? [Any])?.count ?? 0)")
+                            } label: {
+                                Label(lists[k]["label"] as? String ?? "?", systemImage: Self.icon(lists[k]["list"] as? String))
+                            }
+                        }
+                    }
                 }
             }
+            .navigationDestination(for: Int.self) { k in report(k) }
             .searchable(text: $query, prompt: "Any movie, show or game")
             .onSubmit(of: .search) { Task { await search() } }
             .sheet(item: $looking) { t in LookupSheet(title: t, rate: {
@@ -143,6 +142,34 @@ struct WatchedView: View {
         }
     }
 
+    private var lists: [[String: Any]] { data["lists"] as? [[String: Any]] ?? [] }
+
+    static func icon(_ list: String?) -> String {
+        switch list {
+        case "shows": return "tv"
+        case "movies": return "film"
+        case "games": return "gamecontroller"
+        default: return "sparkles"
+        }
+    }
+
+    /// One kind's report: its AI picks, then its overall ranking.
+    private func report(_ k: Int) -> some View {
+        let l = k < lists.count ? lists[k] : [:]
+        let items = (l["items"] as? [[String: Any]] ?? []).map(Title.init)
+        return List {
+            aiPicks(l["list"] as? String ?? "films", title: "AI picks")
+            Section {
+                ForEach(items) { t in rankRow(t) }
+            } footer: {
+                Text("Overall 0-100: where similar-taste lists put it (45%), my predicted score (45%; it weighs critics and audiences as much as my own ratings show they matter), its effect on my key markers (10%), over the parts each title has. Tap one for the breakdown; swipe one you've seen to rate it.")
+            }
+        }
+        .navigationTitle(l["label"] as? String ?? "")
+        .navigationBarTitleDisplayMode(.inline)
+        .refreshable { await load() }
+    }
+
     @ViewBuilder private var trakt: some View {
         let t = data["trakt"] as? [String: Any] ?? [:]
         if let code = t["user_code"] as? String, (t["connected"] as? Bool) != true {
@@ -154,50 +181,8 @@ struct WatchedView: View {
         }
     }
 
-    @ViewBuilder private var toRate: some View {
-        let titles = list("titles")
-        let done = titles.filter { $0.state == "done" }
-        let going = titles.filter { $0.state != "done" }
-        if titles.isEmpty { Muted(text: "Nothing to rate. Movies come here once watched most of the way, shows once paused for two weeks.") }
-        if !done.isEmpty {
-            Section("Watched") { ForEach(done) { t in row(t) } }
-        }
-        if !going.isEmpty {
-            Section("Still watching") { ForEach(going) { t in row(t) } }
-        }
-    }
-
-    @ViewBuilder private var rated: some View {
-        let titles = list("rated")
-        if titles.isEmpty { Muted(text: "No ratings yet.") }
-        ForEach(titles) { t in
-            Button { rating = t } label: {
-                HStack {
-                    VStack(alignment: .leading, spacing: 2) {
-                        Text(t.name).font(.subheadline.weight(.semibold))
-                        Text(t.subtitle).font(.caption).foregroundStyle(.secondary)
-                    }
-                    Spacer()
-                    if t.dismissed {
-                        Text("Skipped").font(.caption).foregroundStyle(.secondary)
-                    } else {
-                        if t.traktError != nil {
-                            Image(systemName: "exclamationmark.triangle").foregroundStyle(.orange).font(.caption)
-                        } else if t.trakt {
-                            Image(systemName: "checkmark.circle").foregroundStyle(.green).font(.caption)
-                        }
-                        Text("\(t.score ?? 0)").font(.title3.monospacedDigit().weight(.semibold))
-                    }
-                }
-            }
-            .buttonStyle(.plain)
-        }
-        Text("Personal Log uses Trakt but is not endorsed or certified by Trakt.")
-            .font(.caption2).foregroundStyle(.secondary).listRowBackground(Color.clear)
-    }
-
     /// The AI's picks from the ranked lists, made on the PC like the report's pages (once per daily report).
-    @ViewBuilder private func aiPicks(_ list: String) -> some View {
+    @ViewBuilder private func aiPicks(_ list: String, title: String) -> some View {
         let ai = self.ai[list] ?? [:]
         let picks = ai["picks"] as? [[String: Any]] ?? []
         if !picks.isEmpty {
@@ -222,65 +207,36 @@ struct WatchedView: View {
                         Text(p["why"] as? String ?? "").font(.caption).foregroundStyle(.secondary)
                     }
                 }
-            } header: { Label("AI picks", systemImage: "sparkles") }
+            } header: { Label(title, systemImage: "sparkles") }
         } else if ai["queued"] as? Bool == true || ai["pending"] as? Bool == true {
             Section { HStack { ProgressView(); Text("The AI is picking from your lists…").foregroundStyle(.secondary) } }
-                header: { Label("AI picks", systemImage: "sparkles") }
+                header: { Label(title, systemImage: "sparkles") }
         }
     }
 
-    @ViewBuilder private var picks: some View {
-        let lists = data["lists"] as? [[String: Any]] ?? []
-        if lists.isEmpty {
-            Muted(text: "Lists come from Trakt (Couchmoney's lists and Trakt's own picks) and Steam once they've synced.")
-        } else {
-            let i = min(listIndex, lists.count - 1)
-            Picker("List", selection: $listIndex) {
-                ForEach(lists.indices, id: \.self) { k in Text(lists[k]["label"] as? String ?? "?").tag(k) }
-            }
-            aiPicks(lists[i]["list"] as? String ?? "films")
-            if lists[i]["combined"] as? Bool != true {
-                Toggle("Sort by my predicted score", isOn: $byPredicted)
-            }
-            Section {
-                let items = (lists[i]["items"] as? [[String: Any]] ?? []).map(Title.init)
-                ForEach(byPredicted ? items.sorted { ($0.predicted ?? -1) > ($1.predicted ?? -1) } : items) { t in
-                    Button { looking = t } label: {
-                        HStack(alignment: .top) {
-                            Text("\(t.rank ?? 0)").font(.subheadline.monospacedDigit().weight(.semibold))
-                                .frame(width: 30, alignment: .trailing)
-                            VStack(alignment: .leading, spacing: 2) {
-                                Text(t.name).font(.subheadline.weight(.semibold))
-                                Text(([t.year].compactMap { $0 } + t.genres.prefix(3)).joined(separator: " · "))
-                                    .font(.caption).foregroundStyle(.secondary)
-                                if !t.scores.isEmpty { Text(t.scores).font(.caption2).foregroundStyle(.secondary) }
-                                if let w = t.why { Text(w).font(.caption2).foregroundStyle(.tertiary).lineLimit(1) }
-                            }
-                            Spacer()
-                            if let c = t.combined {
-                                VStack(alignment: .trailing, spacing: 0) {
-                                    Text("\(c)").font(.title3.monospacedDigit().weight(.semibold))
-                                    Text("overall").font(.caption2).foregroundStyle(.secondary)
-                                }
-                            } else if let p = t.predicted {
-                                VStack(alignment: .trailing, spacing: 0) {
-                                    Text("\(p)").font(.title3.monospacedDigit().weight(.semibold))
-                                    Text(t.isGame ? "fit" : "for me").font(.caption2).foregroundStyle(.secondary)
-                                }
-                            }
-                        }
-                    }
-                    .buttonStyle(.plain)
-                    .swipeActions { Button("Seen it") { rating = t }.tint(.blue) }
+    private func rankRow(_ t: Title) -> some View {
+        Button { looking = t } label: {
+            HStack(alignment: .top) {
+                Text("\(t.rank ?? 0)").font(.subheadline.monospacedDigit().weight(.semibold))
+                    .frame(width: 30, alignment: .trailing)
+                VStack(alignment: .leading, spacing: 2) {
+                    Text(t.name).font(.subheadline.weight(.semibold))
+                    Text(([t.year].compactMap { $0 } + t.genres.prefix(3)).joined(separator: " · "))
+                        .font(.caption).foregroundStyle(.secondary)
+                    if !t.scores.isEmpty { Text(t.scores).font(.caption2).foregroundStyle(.secondary) }
+                    if let w = t.why { Text(w).font(.caption2).foregroundStyle(.tertiary).lineLimit(1) }
                 }
-            } footer: {
-                if lists[i]["combined"] as? Bool == true {
-                    Text("Overall 0-100: where similar-taste lists put it (45%), my predicted score (45%; it weighs critics and audiences as much as my own ratings show they matter), its effect on my key markers (10%), over the parts each title has. Tap one for the breakdown; swipe one you've seen to rate it.")
-                } else {
-                    Text("The number on the left is the list's own rank; on the right, my trait model's predicted score. Tap one to see where it sits in every list; swipe one you've seen to rate it.")
+                Spacer()
+                if let c = t.combined {
+                    VStack(alignment: .trailing, spacing: 0) {
+                        Text("\(c)").font(.title3.monospacedDigit().weight(.semibold))
+                        Text("overall").font(.caption2).foregroundStyle(.secondary)
+                    }
                 }
             }
         }
+        .buttonStyle(.plain)
+        .swipeActions { Button("Seen it") { rating = t }.tint(.blue) }
     }
 
     /// Stremio's catalog (movies, shows) and Steam's store search (games), no keys.
@@ -312,20 +268,6 @@ struct WatchedView: View {
         results = out
     }
 
-    private func row(_ t: Title) -> some View {
-        Button { rating = t } label: {
-            HStack {
-                VStack(alignment: .leading, spacing: 2) {
-                    Text(t.name).font(.subheadline.weight(.semibold))
-                    Text(t.subtitle + (t.hours.map { String(format: " · %.1f h", $0) } ?? "")).font(.caption).foregroundStyle(.secondary)
-                }
-                Spacer()
-                Text("Rate").font(.caption.weight(.semibold)).foregroundStyle(.tint)
-            }
-        }
-        .buttonStyle(.plain)
-    }
-
     private func load() async {
         do {
             let d = try await API(creds: store.creds).rpc("app_watched")
@@ -335,7 +277,7 @@ struct WatchedView: View {
             self.error = error.localizedDescription
         }
         // the AI picks for each list: made on the PC after each daily report (asked for here if they're missing)
-        for list in ["films", "shows", "movies", "games"] {
+        for list in ["all", "shows", "movies", "games"] {
             if let d = try? await API(creds: store.creds).function("app-insight", json: ["page": "watched", "list": list], timeout: 30),
                let j = try? JSONSerialization.jsonObject(with: d) as? [String: Any] {
                 ai[list] = j
@@ -555,4 +497,108 @@ struct LookupSheet: View {
             meta = j["meta"] as? [String: Any] ?? [:]
         }
     }
+}
+
+/// My ratings (More tab): everything rated, newest first; tap one to change or take it back. Whether it reached Trakt.
+struct RatingsView: View {
+    @EnvironmentObject var store: Store
+    @State private var titles: [WatchedView.Title] = []
+    @State private var rating: WatchedView.Title?
+    @State private var error: String?
+
+    var body: some View {
+        NavigationStack {
+            List {
+                if let error { Text(error).font(.footnote).foregroundStyle(.red) }
+                if titles.isEmpty { Muted(text: "No ratings yet.") }
+                ForEach(titles) { t in
+                    Button { rating = t } label: {
+                        HStack {
+                            VStack(alignment: .leading, spacing: 2) {
+                                Text(t.name).font(.subheadline.weight(.semibold))
+                                Text(t.subtitle).font(.caption).foregroundStyle(.secondary)
+                            }
+                            Spacer()
+                            if t.dismissed {
+                                Text("Skipped").font(.caption).foregroundStyle(.secondary)
+                            } else {
+                                if t.traktError != nil {
+                                    Image(systemName: "exclamationmark.triangle").foregroundStyle(.orange).font(.caption)
+                                } else if t.trakt {
+                                    Image(systemName: "checkmark.circle").foregroundStyle(.green).font(.caption)
+                                }
+                                Text("\(t.score ?? 0)").font(.title3.monospacedDigit().weight(.semibold))
+                            }
+                        }
+                    }
+                    .buttonStyle(.plain)
+                }
+                Text("Personal Log uses Trakt but is not endorsed or certified by Trakt.")
+                    .font(.caption2).foregroundStyle(.secondary).listRowBackground(Color.clear)
+            }
+            .navigationTitle("Ratings")
+            .navigationBarTitleDisplayMode(.inline)
+            .refreshable { await load() }
+            .task { await load() }
+            .sheet(item: $rating, onDismiss: { Task { await load() } }) { t in RateSheet(title: t) }
+        }
+    }
+
+    private func load() async {
+        do {
+            let d = try await API(creds: store.creds).rpc("app_watched")
+            let j = (try JSONSerialization.jsonObject(with: d) as? [String: Any]) ?? [:]
+            titles = (j["rated"] as? [[String: Any]] ?? []).map(WatchedView.Title.init)
+            error = nil
+        } catch {
+            self.error = error.localizedDescription
+        }
+    }
+}
+
+/// Media to rate (from the Chores tab): what I've watched (Stremio) or played (Steam, 2 h+) and not rated, a batch at
+/// a time; rating or skipping one brings the next in.
+struct MediaToRateView: View {
+    @EnvironmentObject var store: Store
+    @State private var titles: [WatchedView.Title] = []
+    @State private var rating: WatchedView.Title?
+    static let batch = 10
+
+    var body: some View {
+        List {
+            if titles.isEmpty { Muted(text: "Nothing to rate.") }
+            Section {
+                ForEach(titles.prefix(Self.batch)) { t in
+                    Button { rating = t } label: {
+                        HStack {
+                            VStack(alignment: .leading, spacing: 2) {
+                                Text(t.name).font(.subheadline.weight(.semibold))
+                                Text(t.subtitle + (t.hours.map { String(format: " · %.1f h", $0) } ?? "")
+                                     + (t.state == "done" ? "" : " · still going"))
+                                    .font(.caption).foregroundStyle(.secondary)
+                            }
+                            Spacer()
+                            Text("Rate").font(.caption.weight(.semibold)).foregroundStyle(.tint)
+                        }
+                    }
+                    .buttonStyle(.plain)
+                }
+            } footer: {
+                if titles.count > Self.batch { Text("\(titles.count - Self.batch) more after these.") }
+            }
+        }
+        .navigationTitle("Media to rate")
+        .navigationBarTitleDisplayMode(.inline)
+        .refreshable { await load() }
+        .task { await load() }
+        .sheet(item: $rating, onDismiss: { Task { await load() } }) { t in RateSheet(title: t) }
+    }
+
+    static func titles(_ store: Store) async -> [WatchedView.Title] {
+        guard let d = try? await API(creds: store.creds).rpc("app_watched"),
+              let j = try? JSONSerialization.jsonObject(with: d) as? [String: Any] else { return [] }
+        return (j["titles"] as? [[String: Any]] ?? []).map(WatchedView.Title.init)
+    }
+
+    private func load() async { titles = await Self.titles(store) }
 }
