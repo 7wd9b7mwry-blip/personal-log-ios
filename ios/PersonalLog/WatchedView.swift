@@ -12,6 +12,7 @@ struct WatchedView: View {
     @State private var section = 0
     @State private var rating: Title?
     @State private var listIndex = 0
+    @State private var byPredicted = false
     @State private var query = ""
     @State private var results: [Title] = []
     @State private var looking: Title?
@@ -199,8 +200,10 @@ struct WatchedView: View {
             Picker("List", selection: $listIndex) {
                 ForEach(lists.indices, id: \.self) { k in Text(lists[k]["label"] as? String ?? "?").tag(k) }
             }
+            Toggle("Sort by my predicted score", isOn: $byPredicted)
             Section {
-                ForEach((lists[i]["items"] as? [[String: Any]] ?? []).map(Title.init)) { t in
+                let items = (lists[i]["items"] as? [[String: Any]] ?? []).map(Title.init)
+                ForEach(byPredicted ? items.sorted { ($0.predicted ?? -1) > ($1.predicted ?? -1) } : items) { t in
                     Button { looking = t } label: {
                         HStack(alignment: .top) {
                             Text("\(t.rank ?? 0)").font(.subheadline.monospacedDigit().weight(.semibold))
@@ -212,13 +215,20 @@ struct WatchedView: View {
                                 if !t.scores.isEmpty { Text(t.scores).font(.caption2).foregroundStyle(.secondary) }
                                 if let w = t.why { Text(w).font(.caption2).foregroundStyle(.tertiary).lineLimit(1) }
                             }
+                            Spacer()
+                            if let p = t.predicted {
+                                VStack(alignment: .trailing, spacing: 0) {
+                                    Text("\(p)").font(.title3.monospacedDigit().weight(.semibold))
+                                    Text(t.isGame ? "fit" : "for me").font(.caption2).foregroundStyle(.secondary)
+                                }
+                            }
                         }
                     }
                     .buttonStyle(.plain)
                     .swipeActions { Button("Seen it") { rating = t }.tint(.blue) }
                 }
             } footer: {
-                Text("In the list's own order. Tap one to see where it sits in every list; swipe one you've seen to rate it.")
+                Text("The number on the left is the list's own rank; on the right, my trait model's predicted score (games: how well it fits what I play most). Tap one to see where it sits in every list; swipe one you've seen to rate it.")
             }
         }
     }
@@ -378,6 +388,14 @@ struct LookupSheet: View {
                         Text(String(format: "You've played %.1f h", h))
                     }
                 }
+                if let p = predicted {
+                    Section {
+                        Text("Predicted for you: \(p)").font(.headline)
+                    } footer: {
+                        Text(title.isGame ? "From Steam's voted tags, fitted to what you play most (0-100 among your games)."
+                                          : "From what Trakt comments and the description say it's like, its genres and IMDb rating, fitted to your ratings.")
+                    }
+                }
                 Section("In your lists") {
                     let ranks = info["ranks"] as? [[String: Any]] ?? []
                     if ranks.isEmpty {
@@ -401,6 +419,11 @@ struct LookupSheet: View {
             .task { await load() }
         }
         .presentationDetents([.medium, .large])
+    }
+
+    private var predicted: Int? {
+        (info["film"] as? [String: Any])?["predicted"] as? Int ?? (info["game"] as? [String: Any])?["predicted"] as? Int
+            ?? title.predicted
     }
 
     private func label(_ r: [String: Any]) -> String {

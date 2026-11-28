@@ -163,7 +163,7 @@ struct ISection: Decodable, Hashable {
     var from: FromFocus?       // the overview's: the perspective report it comes from
 
     var label: String {
-        ["recent": "Recent days", "pattern": "Pattern", "trend": "Trend", "hypothesis": "Hypothesis", "test": "Worth testing", "watch": "Watch"][type] ?? type.capitalized
+        ["status": "At a glance", "recent": "Recent days", "pattern": "Pattern", "trend": "Trend", "hypothesis": "Hypothesis", "test": "Worth testing", "watch": "Watch"][type] ?? type.capitalized
     }
 
 }
