@@ -240,7 +240,7 @@ struct WatchedView: View {
                 }
             } footer: {
                 if lists[i]["combined"] as? Bool == true {
-                    Text("Overall 0-100: where the lists put it (35%), my trait model (30%), critics and audiences (25%), its effect on me (10%), over the parts each title has. Tap one for the breakdown; swipe one you've seen to rate it.")
+                    Text("Overall 0-100: where similar-taste lists put it (45%), my predicted score (45%; it weighs critics and audiences as much as my own ratings show they matter), its effect on my key markers (10%), over the parts each title has. Tap one for the breakdown; swipe one you've seen to rate it.")
                 } else {
                     Text("The number on the left is the list's own rank; on the right, my trait model's predicted score. Tap one to see where it sits in every list; swipe one you've seen to rate it.")
                 }
@@ -403,16 +403,21 @@ struct LookupSheet: View {
                         Text(String(format: "You've played %.1f h", h))
                     }
                 }
-                if let c = title.combined {
+                if (info["scoring"] as? Bool) == true && overall == nil {
+                    Section {
+                        HStack { ProgressView(); Text("Scoring this title on the PC: a minute or two.").foregroundStyle(.secondary) }
+                    }
+                }
+                if let c = overall {
                     Section {
                         Text("Overall for you: \(c)").font(.headline)
-                        let names = ["discovery": "Where the lists put it", "model": "My trait model",
-                                     "people": "Critics and audiences", "effect": "Effect on me"]
-                        ForEach(["discovery", "model", "people", "effect"], id: \.self) { k in
+                        let names = ["discovery": "Where similar-taste lists put it", "model": "My predicted score",
+                                     "effect": "Effect on my key markers"]
+                        ForEach(["discovery", "model", "effect"], id: \.self) { k in
                             HStack {
                                 Text(names[k] ?? k)
                                 Spacer()
-                                Text(title.parts[k].map { "\($0)" } ?? "–").monospacedDigit().foregroundStyle(.secondary)
+                                Text(parts[k].map { "\($0)" } ?? "–").monospacedDigit().foregroundStyle(.secondary)
                             }
                         }
                     }
@@ -422,7 +427,7 @@ struct LookupSheet: View {
                         Text("Predicted for you: \(p)").font(.headline)
                     } footer: {
                         Text(title.isGame ? "From Steam's voted tags, fitted to what you play most (0-100 among your games)."
-                                          : "From what Trakt comments and the description say it's like, its genres and IMDb rating, fitted to your ratings.")
+                                          : "From what Rotten Tomatoes audience and critic reviews, Trakt comments, Wikipedia and the description say it's like, its genres and IMDb rating, fitted to your ratings.")
                     }
                 }
                 Section("In your lists") {
@@ -431,7 +436,13 @@ struct LookupSheet: View {
                         Text("Not on any list: Couchmoney, Trakt and Steam don't rank it for you.").foregroundStyle(.secondary)
                     }
                     ForEach(ranks.indices, id: \.self) { k in
-                        Text("#\(ranks[k]["rank"] as? Int ?? 0) of \(ranks[k]["of"] as? Int ?? 0) in \(label(ranks[k]))")
+                        VStack(alignment: .leading, spacing: 2) {
+                            Text("#\(ranks[k]["rank"] as? Int ?? 0) of \(ranks[k]["of"] as? Int ?? 0) in \(label(ranks[k]))")
+                            // what of mine put it there (related / Steam lists: "Like Review, Silicon Valley, ...")
+                            if let w = ranks[k]["why"] as? String, !w.isEmpty {
+                                Text(w).font(.caption).foregroundStyle(.secondary)
+                            }
+                        }
                     }
                 }
                 Section {
@@ -450,6 +461,13 @@ struct LookupSheet: View {
         .presentationDetents([.medium, .large])
     }
 
+    private var overall: Int? { (info["combined"] as? NSNumber)?.intValue ?? title.combined }
+
+    private var parts: [String: Int] {
+        let p = (info["parts"] as? [String: Any] ?? [:]).compactMapValues { ($0 as? NSNumber)?.intValue }
+        return p.isEmpty ? title.parts : p
+    }
+
     private var predicted: Int? {
         (info["film"] as? [String: Any])?["predicted"] as? Int ?? (info["game"] as? [String: Any])?["predicted"] as? Int
             ?? title.predicted
@@ -460,16 +478,33 @@ struct LookupSheet: View {
         switch source {
         case "couchmoney": return list
         case "trakt": return "Trakt \(list)"
-        default: return list == "upcoming" ? "upcoming games" : "Steam games"
+        case "related": return "related to my favourite \(list)"
+        case "steam": return list == "upcoming" ? "upcoming games" : "Steam games"
+        default: return list
         }
     }
 
-    private func load() async {
+    private func lookup() async {
         do {
             let d = try await API(creds: store.creds).rpc("app_title_lookup", json: ["p_imdb": title.id])
             info = (try JSONSerialization.jsonObject(with: d) as? [String: Any]) ?? [:]
         } catch {
             self.error = error.localizedDescription
+        }
+    }
+
+    private func load() async {
+        await lookup()
+        // not scored yet (a search result the PC hasn't seen): ask the PC, then look again while the sheet is open
+        if !title.isGame && (info["film"] as? [String: Any]) == nil && error == nil {
+            _ = try? await API(creds: store.creds).rpc("app_title_score", json: ["p_imdb": title.id, "p_kind": title.kind,
+                                                                                 "p_name": title.name])
+            for _ in 0..<15 {
+                try? await Task.sleep(nanoseconds: 20_000_000_000)
+                if Task.isCancelled { return }
+                await lookup()
+                if overall != nil && (info["scoring"] as? Bool) != true { break }
+            }
         }
         // what it is (Stremio's catalog, no key), for titles the PC hasn't looked up
         if !title.isGame, let u = URL(string: "https://v3-cinemeta.strem.io/meta/\(title.kind)/\(title.id).json"),
