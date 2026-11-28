@@ -13,6 +13,7 @@ struct WatchedView: View {
     @State private var rating: Title?
     @State private var listIndex = 0
     @State private var byPredicted = false
+    @State private var ai: [String: Any] = [:]   // the AI picks (app-insight page "watched")
     @State private var query = ""
     @State private var results: [Title] = []
     @State private var looking: Title?
@@ -195,7 +196,40 @@ struct WatchedView: View {
             .font(.caption2).foregroundStyle(.secondary).listRowBackground(Color.clear)
     }
 
+    /// The AI's picks from the ranked lists, made on the PC like the report's pages (once per daily report).
+    @ViewBuilder private var aiPicks: some View {
+        let picks = ai["picks"] as? [[String: Any]] ?? []
+        if !picks.isEmpty {
+            Section {
+                if let h = ai["headline"] as? String, !h.isEmpty { Text(h).font(.subheadline.weight(.semibold)) }
+                ForEach(Array(picks.enumerated()), id: \.offset) { _, p in
+                    Button { looking = Title(p) } label: {
+                        VStack(alignment: .leading, spacing: 2) {
+                            HStack {
+                                Text(p["name"] as? String ?? "?").font(.subheadline.weight(.semibold))
+                                Spacer()
+                                if let c = p["combined"] as? Int { Text("\(c)").font(.subheadline.monospacedDigit()).foregroundStyle(.secondary) }
+                            }
+                            Text(p["why"] as? String ?? "").font(.caption).foregroundStyle(.secondary)
+                        }
+                    }
+                    .buttonStyle(.plain)
+                }
+                ForEach(Array((ai["avoid"] as? [[String: Any]] ?? []).enumerated()), id: \.offset) { _, p in
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text("Skip: " + (p["name"] as? String ?? "?")).font(.subheadline)
+                        Text(p["why"] as? String ?? "").font(.caption).foregroundStyle(.secondary)
+                    }
+                }
+            } header: { Label("AI picks", systemImage: "sparkles") }
+        } else if ai["queued"] as? Bool == true || ai["pending"] as? Bool == true {
+            Section { HStack { ProgressView(); Text("The AI is picking from your lists…").foregroundStyle(.secondary) } }
+                header: { Label("AI picks", systemImage: "sparkles") }
+        }
+    }
+
     @ViewBuilder private var picks: some View {
+        aiPicks
         let lists = data["lists"] as? [[String: Any]] ?? []
         if lists.isEmpty {
             Muted(text: "Lists come from Trakt (Couchmoney's lists and Trakt's own picks) and Steam once they've synced.")
@@ -298,6 +332,11 @@ struct WatchedView: View {
             error = nil
         } catch {
             self.error = error.localizedDescription
+        }
+        // the AI picks: the stored ones, or asks the PC for them (made once per daily report)
+        if let d = try? await API(creds: store.creds).function("app-insight", json: ["page": "watched"], timeout: 30),
+           let j = try? JSONSerialization.jsonObject(with: d) as? [String: Any] {
+            ai = j
         }
     }
 }
